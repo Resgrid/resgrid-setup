@@ -80,9 +80,5 @@ for domain in "${domains[@]}"; do
   domain_args="$domain_args -d $domain"
 done
 
-cp -f /etc/letsencrypt/live/$NGINX_RESGRID_WEB_URL/*.* /etc/letsencrypt/web/;
-cp -f /etc/letsencrypt/live/$NGINX_RESGRID_API_URL/*.* /etc/letsencrypt/api/;
-cp -f /etc/letsencrypt/live/$NGINX_RESGRID_EVENTS_URL/*.* /etc/letsencrypt/events/;
-
 echo "### Reloading nginx ..."
 docker-compose exec nginx nginx -s reload
