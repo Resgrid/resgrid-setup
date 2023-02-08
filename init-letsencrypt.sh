@@ -8,7 +8,7 @@ fi
 domains=($NGINX_RESGRID_WEB_URL, $NGINX_RESGRID_API_URL, $NGINX_RESGRID_EVENTS_URL)
 rsa_key_size=4096
 data_path="./data/certbot"
-email="team@resgrid.com" # Adding a valid address is strongly recommended
+email=$NGINX_LETSENCRYPT_EMAIL # Adding a valid address is strongly recommended
 staging=0 # Set to 1 if you're testing your setup to avoid hitting request limits
 
 if [ -d "$data_path" ]; then
@@ -75,6 +75,14 @@ docker-compose run --rm --entrypoint "\
     --agree-tos \
     --force-renewal" certbot
 echo
+
+for domain in "${domains[@]}"; do
+  domain_args="$domain_args -d $domain"
+done
+
+cp -f /etc/letsencrypt/live/$NGINX_RESGRID_WEB_URL/*.* /etc/letsencrypt/web/;
+cp -f /etc/letsencrypt/live/$NGINX_RESGRID_API_URL/*.* /etc/letsencrypt/api/;
+cp -f /etc/letsencrypt/live/$NGINX_RESGRID_EVENTS_URL/*.* /etc/letsencrypt/events/;
 
 echo "### Reloading nginx ..."
 docker-compose exec nginx nginx -s reload

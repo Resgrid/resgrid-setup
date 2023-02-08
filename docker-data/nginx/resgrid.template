@@ -12,7 +12,7 @@ upstream events {
 
 server {
     listen 80;
-    server_name rg.yourcompany.com;
+    server_name $NGINX_RESGRID_WEB_URL;
     server_tokens off;
 
     location /.well-known/acme-challenge/ {
@@ -29,11 +29,11 @@ server {
 
 server {
     listen 443 ssl;
-    server_name rg.yourcompany.com;
+    server_name $NGINX_RESGRID_WEB_URL;
     server_tokens off;
 
-    ssl_certificate /etc/letsencrypt/web/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/web/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/$NGINX_RESGRID_WEB_URL/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$NGINX_RESGRID_WEB_URL/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
@@ -47,7 +47,7 @@ server {
 
 server {
     listen 80;
-    server_name rgapi.yourcompany.com;
+    server_name $NGINX_RESGRID_API_URL;
     server_tokens off;
 
     location /.well-known/acme-challenge/ {
@@ -64,11 +64,11 @@ server {
 
 server {
     listen 443 ssl;
-    server_name rgapi.yourcompany.com;
+    server_name $NGINX_RESGRID_API_URL;
     server_tokens off;
 
-    ssl_certificate /etc/letsencrypt/api/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/api/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/$NGINX_RESGRID_API_URL/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$NGINX_RESGRID_API_URL/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
@@ -82,7 +82,7 @@ server {
 
 server {
     listen 80;
-    server_name rgevents.yourcompany.com;
+    server_name $NGINX_RESGRID_EVENTS_URL;
     server_tokens off;
 
     location /.well-known/acme-challenge/ {
@@ -99,11 +99,11 @@ server {
 
 server {
     listen 443 ssl;
-    server_name rgevents.yourcompany.com;
+    server_name $NGINX_RESGRID_EVENTS_URL;
     server_tokens off;
 
-    ssl_certificate /etc/letsencrypt/events/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/events/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/$NGINX_RESGRID_EVENTS_URL/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$NGINX_RESGRID_EVENTS_URL/privkey.pem;
     include /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 

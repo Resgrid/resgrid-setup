@@ -164,7 +164,7 @@ services:
       ports:
         - "80:80"
         - "443:443"
-      command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+      command: "/bin/sh -c 'envsubst < /etc/nginx/conf.d/resgrid.template > /etc/nginx/conf.d/app.conf && while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
   certbot:
       image: certbot/certbot
       restart: unless-stopped
