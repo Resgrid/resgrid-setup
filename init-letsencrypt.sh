@@ -1,8 +1,9 @@
 #!/bin/bash
 
-while IFS== read -r key value; do
-  printf -v "$key" %s "$value" && export "$key"
-done <resgrid.env
+set -a
+source <(cat resgrid.env | \
+    sed -e '/^#/d;/^\s*$/d' -e "s/'/'\\\''/g" -e "s/=\(.*\)/='\1'/g")
+set +a
 
 if ! [ -x "$(command -v docker-compose)" ]; then
   echo 'Error: docker-compose is not installed.' >&2
