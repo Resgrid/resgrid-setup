@@ -10,7 +10,7 @@ if ! [ -x "$(command -v docker-compose)" ]; then
   exit 1
 fi
 
-domains=($NGINX_RESGRID_WEB_URL, $NGINX_RESGRID_API_URL, $NGINX_RESGRID_EVENTS_URL)
+domains=($NGINX_RESGRID_WEB_URL $NGINX_RESGRID_API_URL $NGINX_RESGRID_EVENTS_URL)
 rsa_key_size=4096
 data_path="./data/certbot"
 email=$NGINX_LETSENCRYPT_EMAIL # Adding a valid address is strongly recommended
