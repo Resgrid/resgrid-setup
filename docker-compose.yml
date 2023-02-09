@@ -92,16 +92,10 @@ services:
       - SA_PASSWORD=Resgrid123!!
       - ACCEPT_EULA=Y
       - MSSQL_PID=Express
-    volumes: 
-      - type: bind
-        source: ./docker-data/sql/data
-        target: /var/opt/mssql/data
-      - type: bind
-        source: ./docker-data/sql/log
-        target: /var/opt/mssql/log
-      - type: bind
-        source: ./docker-data/sql/backup
-        target: /var/opt/mssql/backup
+    volumes:
+       - ./docker-data/sql/data:/var/opt/mssql/data
+       - ./docker-data/sql/log:/var/opt/mssql/log
+       - ./docker-data/sql/backup:/var/opt/mssql/backup
 
   redis:
     image: "redis:alpine"
