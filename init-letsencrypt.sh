@@ -85,5 +85,7 @@ for domain in "${domains[@]}"; do
   domain_args="$domain_args -d $domain"
 done
 
+cp -f ./docker-data/nginx/resgrid-ssl.template ./docker-data/nginx/resgrid.template
+
 echo "### Reloading nginx ..."
 docker-compose exec nginx nginx -s reload
