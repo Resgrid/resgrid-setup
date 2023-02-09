@@ -20,7 +20,7 @@ services:
       - worker
       - mongodb
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,api:80,mongodb:27017
+      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,api:5152,mongodb:27017
       - WAIT_TIMEOUT=300
 
   api:
@@ -41,7 +41,7 @@ services:
       - worker
       - mongodb
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,events:80,mongodb:27017
+      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,events:5153,mongodb:27017
       - WAIT_TIMEOUT=300
 
   events:
@@ -83,7 +83,7 @@ services:
 
   db:
     ports:
-      - "5157:1433"
+      - "1433:1433"
     networks:
       rgmain:
         ipv4_address: 172.16.193.55
@@ -102,7 +102,7 @@ services:
     image: "redis:alpine"
     command: redis-server --save 60 1 --loglevel warning
     ports:
-     - "5158:6379"
+     - "6379:6379"
     restart: always
     networks:
       rgmain:
@@ -124,9 +124,9 @@ services:
   elk:
     image: sebp/elk
     ports:
-      - "5163:5601"
-      - "5164:9200"
-      - "5165:5044"
+      - "5601:5601"
+      - "9200:9200"
+      - "5044:5044"
     restart: always
     networks:
       rgmain:
