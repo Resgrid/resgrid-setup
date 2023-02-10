@@ -1,13 +1,13 @@
 upstream web {
-    server 172.16.193.51:5151;
+    server 172.16.193.51:80;
 }
 
 upstream api {
-    server 172.16.193.52:5152;
+    server 172.16.193.52:80;
 }
 
 upstream events {
-    server 172.16.193.53:5153;
+    server 172.16.193.53:80;
 }
 
 server {
