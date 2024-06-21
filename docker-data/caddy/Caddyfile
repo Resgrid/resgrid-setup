@@ -1,0 +1,25 @@
+http://{$NGINX_RESGRID_WEB_URL} https://{$NGINX_RESGRID_WEB_URL} {
+  tls {$NGINX_LETSENCRYPT_EMAIL}
+  encode gzip
+
+  reverse_proxy 172.16.193.51:80 {
+       header_up X-Real-IP {remote_host}
+  }
+}
+
+http://{$NGINX_RESGRID_API_URL} https://{$NGINX_RESGRID_API_URL} {
+  tls {$NGINX_LETSENCRYPT_EMAIL}
+  encode gzip
+
+  reverse_proxy 172.16.193.52:80 {
+       header_up X-Real-IP {remote_host}
+  }
+}
+
+http://{$NGINX_RESGRID_EVENTS_URL} https://{$NGINX_RESGRID_EVENTS_URL} {
+  tls {$NGINX_LETSENCRYPT_EMAIL}
+
+  reverse_proxy 172.16.193.53:80 {
+       header_up X-Real-IP {remote_host}
+  }
+}
