@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   web:
     image: "resgridllc/resgridwebcore:latest"
@@ -131,7 +129,7 @@ services:
     networks:
       rgmain:
         ipv4_address: 172.16.193.58
-      
+
   mongodb:
     image: mongo:4.4.18
     ports:
@@ -161,8 +159,8 @@ services:
         rgmain:
           ipv4_address: 172.16.193.60
     volumes:
-      - caddy: ./docker-data/caddy/
-      - .Caddyfile: ./docker-data/caddy/Caddyfile
+      - ./docker-data/caddy/:/data
+      - ./docker-data/caddy/Caddyfile:/etc/caddy/Caddyfile
 
 networks:
   rgmain:
