@@ -1,0 +1,8 @@
+services:
+  api:
+    image: "resgridllc/resgridwebservices:latest"
+    ports:
+      - "5152:80"
+    env_file:
+      - ../.env
+    restart: always
