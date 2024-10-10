@@ -28,7 +28,6 @@ services:
       rgmain:
         ipv4_address: 172.16.193.52
     depends_on:
-      - events
       - db
       - redis
       - rabbitmq
@@ -110,17 +109,6 @@ services:
     networks:
       rgmain:
         ipv4_address: 172.16.193.57
-
-  elk:
-    image: sebp/elk
-    ports:
-      - "5601:5601"
-      - "9200:9200"
-      - "5044:5044"
-    restart: always
-    networks:
-      rgmain:
-        ipv4_address: 172.16.193.58
 
   mongodb:
     image: mongo:4.4.18
