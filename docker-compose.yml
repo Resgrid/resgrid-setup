@@ -3,8 +3,6 @@ services:
     image: "resgridllc/resgridwebcore:latest"
     ports:
       - "5151:80"
-    env_file:
-      - resgrid.env
     restart: always
     networks:
       rgmain:
@@ -25,8 +23,6 @@ services:
     image: "resgridllc/resgridwebservices:latest"
     ports:
       - "5152:80"
-    env_file:
-      - resgrid.env
     restart: always
     networks:
       rgmain:
@@ -46,8 +42,6 @@ services:
     image: "resgridllc/resgridwebevents:latest"
     ports:
       - "5153:80"
-    env_file:
-      - resgrid.env
     restart: always
     networks:
       rgmain:
@@ -63,8 +57,6 @@ services:
 
   worker:
     image: "resgridllc/resgridworkersconsole:latest"
-    env_file:
-      - resgrid.env
     restart: always
     networks:
       rgmain:
@@ -150,8 +142,6 @@ services:
   caddy:
     image: caddy:2.0.0-alpine
     restart: always
-    env_file:
-        - resgrid.env
     ports:
       - 80:80
       - 443:443
