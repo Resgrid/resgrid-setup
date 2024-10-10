@@ -4,7 +4,7 @@ services:
     ports:
       - "5151:80"
     env_file:
-      - resgrid.env
+      - .env
     restart: always
     networks:
       rgmain:
@@ -26,7 +26,7 @@ services:
     ports:
       - "5152:80"
     env_file:
-      - resgrid.env
+      - .env
     restart: always
     networks:
       rgmain:
@@ -47,7 +47,7 @@ services:
     ports:
       - "5153:80"
     env_file:
-      - resgrid.env
+      - .env
     restart: always
     networks:
       rgmain:
@@ -64,7 +64,7 @@ services:
   worker:
     image: "resgridllc/resgridworkersconsole:latest"
     env_file:
-      - resgrid.env
+      - .env
     restart: always
     networks:
       rgmain:
@@ -119,17 +119,6 @@ services:
       rgmain:
         ipv4_address: 172.16.193.57
 
-  elk:
-    image: sebp/elk
-    ports:
-      - "5601:5601"
-      - "9200:9200"
-      - "5044:5044"
-    restart: always
-    networks:
-      rgmain:
-        ipv4_address: 172.16.193.58
-
   mongodb:
     image: mongo:4.4.18
     ports:
@@ -151,7 +140,7 @@ services:
     image: caddy:2.0.0-alpine
     restart: always
     env_file:
-        - resgrid.env
+        - .env
     ports:
       - 80:80
       - 443:443
