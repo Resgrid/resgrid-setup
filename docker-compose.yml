@@ -136,6 +136,22 @@ services:
       - ./docker-data/mongo/db:/data/configdb
       - ./docker-data/mongo/configdb:/data/db
 
+  tileserver:
+    image: overv/openstreetmap-tile-server
+    volumes:
+      - osm-data:/docker-data/osm/
+    restart: always
+    ports:
+      - "5154:80"
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.61
+    command: "run"
+
+volumes:
+  osm-data:
+    external: true
+
   caddy:
     image: caddy:2.0.0-alpine
     restart: always

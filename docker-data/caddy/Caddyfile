@@ -45,3 +45,17 @@ https://{$NGINX_RESGRID_EVENTS_URL} {
        header_up X-Real-IP {remote_host}
   }
 }
+
+http://{$NGINX_RESGRID_TILE_URL} {
+  reverse_proxy 172.16.193.61:80 {
+       header_up X-Real-IP {remote_host}
+  }
+}
+
+https://{$NGINX_RESGRID_TILE_URL} {
+  tls {$NGINX_LETSENCRYPT_EMAIL}
+
+  reverse_proxy 172.16.193.61:80 {
+       header_up X-Real-IP {remote_host}
+  }
+}
