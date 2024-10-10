@@ -3,6 +3,8 @@ services:
     image: "resgridllc/resgridwebcore:latest"
     ports:
       - "5151:80"
+    env_file:
+      - .env
     restart: always
     networks:
       rgmain:
@@ -23,11 +25,14 @@ services:
     image: "resgridllc/resgridwebservices:latest"
     ports:
       - "5152:80"
+    env_file:
+      - .env
     restart: always
     networks:
       rgmain:
         ipv4_address: 172.16.193.52
     depends_on:
+      - events
       - db
       - redis
       - rabbitmq
@@ -41,6 +46,8 @@ services:
     image: "resgridllc/resgridwebevents:latest"
     ports:
       - "5153:80"
+    env_file:
+      - .env
     restart: always
     networks:
       rgmain:
@@ -56,6 +63,8 @@ services:
 
   worker:
     image: "resgridllc/resgridworkersconsole:latest"
+    env_file:
+      - .env
     restart: always
     networks:
       rgmain:
@@ -130,6 +139,8 @@ services:
   caddy:
     image: caddy:2.0.0-alpine
     restart: always
+    env_file:
+        - .env
     ports:
       - 80:80
       - 443:443
