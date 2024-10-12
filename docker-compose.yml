@@ -139,7 +139,7 @@ services:
   tileserver:
     image: overv/openstreetmap-tile-server
     volumes:
-      - osm-data:/docker-data/osm/
+      - ./docker-data/osm:/data/database/
     restart: always
     ports:
       - "5154:80"
@@ -169,6 +169,3 @@ networks:
       driver: default
       config:
         - subnet: 172.16.193.0/24
-volumes:
-  osm-data:
-    external: true
