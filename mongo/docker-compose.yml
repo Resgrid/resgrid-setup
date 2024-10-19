@@ -1,0 +1,14 @@
+services:
+  mongodb:
+    image: mongo:4.4.18
+    ports:
+      - 27017:27017
+    restart: always
+    environment:
+      - MONGO_INITDB_DATABASE=resgrid
+      - MONGO_INITDB_ROOT_USERNAME=resgridUser
+      - MONGO_INITDB_ROOT_PASSWORD=Resgrid123!!
+    volumes:
+      - ./mongo-entrypoint:/docker-entrypoint-initdb.d
+      - ./docker-data/mongo/db:/data/configdb
+      - ./docker-data/mongo/configdb:/data/db

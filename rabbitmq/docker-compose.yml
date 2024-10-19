@@ -1,0 +1,10 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      - RABBITMQ_DEFAULT_USER=resgrid
+      - RABBITMQ_DEFAULT_PASS=Resgrid321!
+    ports:
+      - "5160:15672"
+      - "5159:5672"
+    restart: always

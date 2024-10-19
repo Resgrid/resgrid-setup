@@ -1,0 +1,8 @@
+services:
+  events:
+    image: "resgridllc/resgridwebevents:latest"
+    ports:
+      - "5153:80"
+    env_file:
+      - .env
+    restart: always

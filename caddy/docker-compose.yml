@@ -1,0 +1,12 @@
+services:
+  caddy:
+    image: caddy:2.0.0-alpine
+    restart: always
+    env_file:
+        - .env
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./docker-data/caddy/:/data
+      - ./docker-data/caddy/Caddyfile:/etc/caddy/Caddyfile

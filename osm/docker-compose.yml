@@ -1,0 +1,9 @@
+services:
+  tileserver:
+    image: overv/openstreetmap-tile-server
+    volumes:
+      - ./docker-data/osm:/data/database/
+    restart: always
+    ports:
+      - "5154:80"
+    command: "run"
