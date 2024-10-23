@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/mssql/server:2022-latest
+FROM mcr.microsoft.com/azure-sql-edge
 
 WORKDIR /usr/src/app
 
