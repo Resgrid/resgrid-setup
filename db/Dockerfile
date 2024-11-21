@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/mssql/server:2022-latest
+FROM mcr.microsoft.com/mssql/server:2022-CU12-ubuntu-22.04
 
 WORKDIR /usr/src/app
 
