@@ -80,21 +80,17 @@ services:
       - WAIT_TIMEOUT=180
 
   db:
+    image: 'postgres:latest'
     ports:
-      - "1433:1433"
+      - 5432:5432
+    env_file:
+      - .env
     networks:
       rgmain:
         ipv4_address: 172.16.193.55
-    build: ./db
-    user: root
-    environment:
-      - SA_PASSWORD=Resgrid123!!
-      - ACCEPT_EULA=Y
-      - MSSQL_PID=Express
     volumes:
-       - ./docker-data/sql/data:/var/opt/mssql/data
-       - ./docker-data/sql/log:/var/opt/mssql/log
-       - ./docker-data/sql/backup:/var/opt/mssql/backup
+      - ${PWD}/docker-data/sql/:/var/lib/postgresql/data/
+      - ${PWD}/db/init.sql:/docker-entrypoint-initdb.d/init.sql
 
   redis:
     image: "redis:alpine"
