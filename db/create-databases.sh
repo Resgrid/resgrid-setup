@@ -1,4 +1,3 @@
-#!/bin/bash
 set -e
 
 # Function to create database if it doesn't exist

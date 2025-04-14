@@ -90,14 +90,13 @@ services:
         ipv4_address: 172.16.193.55
     volumes:
       - ./docker-data/sql/:/var/lib/postgresql/data/
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./db/create-databases.sh:/docker-entrypoint-initdb.d/create-databases.sh
-      - ./db/custom-entrypoint.sh:/docker-entrypoint-initdb.d/custom-entrypoint.sh
+      - ./db/create-databases.sh:/create-databases.sh
+      - ./db/custom-entrypoint.sh:/custom-entrypoint.sh
     command: >
-      bash -c "
-        chmod +x /docker-entrypoint-initdb.d/custom-entrypoint.sh &&
-        chmod +x /docker-entrypoint-initdb.d/create-databases.sh &&
-        /docker-entrypoint-initdb.d/custom-entrypoint.sh
+      sh -c "
+        chmod +x /custom-entrypoint.sh &&
+        chmod +x /create-databases.sh &&
+        /custom-entrypoint.sh
       "
 
   redis:

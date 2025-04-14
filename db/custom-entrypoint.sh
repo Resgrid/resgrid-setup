@@ -1,4 +1,3 @@
-#!/bin/bash
 set -e
 
 # Start PostgreSQL in the background
@@ -14,7 +13,7 @@ done
 
 echo "PostgreSQL is ready - creating databases..."
 # Run our database creation script
-/docker-entrypoint-initdb.d/create-databases.sh
+/create-databases.sh
 
 # Keep the container running
 wait
