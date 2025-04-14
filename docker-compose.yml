@@ -91,6 +91,13 @@ services:
     volumes:
       - ./docker-data/sql/:/var/lib/postgresql/data/
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./db/create-databases.sh:/docker-entrypoint-initdb.d/create-databases.sh
+    command: >
+      bash -c "
+        chmod +x /docker-entrypoint-initdb.d/create-databases.sh && 
+        /docker-entrypoint-initdb.d/create-databases.sh && 
+        docker-entrypoint.sh postgres
+      "
 
   redis:
     image: "redis:alpine"
