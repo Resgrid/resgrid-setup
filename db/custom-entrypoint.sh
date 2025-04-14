@@ -6,7 +6,7 @@ docker-entrypoint.sh postgres &
 
 # Wait for PostgreSQL to be ready
 echo "Waiting for PostgreSQL to be ready..."
-until pg_isready -h localhost -U $POSTGRES_USER
+until pg_isready -h 127.0.0.1 -U $POSTGRES_USER
 do
   echo "Waiting for PostgreSQL to be ready..."
   sleep 1
