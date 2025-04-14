@@ -89,8 +89,8 @@ services:
       rgmain:
         ipv4_address: 172.16.193.55
     volumes:
-      - ${PWD}/docker-data/sql/:/var/lib/postgresql/data/
-      - ${PWD}/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./docker-data/sql/:/var/lib/postgresql/data/
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
 
   redis:
     image: "redis:alpine"
