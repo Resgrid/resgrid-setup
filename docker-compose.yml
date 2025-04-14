@@ -18,7 +18,7 @@ services:
       - worker
       - mongodb
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,api:80,mongodb:27017
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,api:80,mongodb:27017
       - WAIT_TIMEOUT=300
 
   api:
@@ -39,7 +39,7 @@ services:
       - worker
       - mongodb
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,events:80,mongodb:27017
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,events:80,mongodb:27017
       - WAIT_TIMEOUT=300
 
   events:
@@ -57,7 +57,7 @@ services:
       - redis
       - rabbitmq
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672
       - WAIT_AFTER=120
       - WAIT_TIMEOUT=300
 
@@ -75,7 +75,7 @@ services:
       - rabbitmq
       - mongodb
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,mongodb:27017
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,mongodb:27017
       - WAIT_AFTER=90
       - WAIT_TIMEOUT=180
 
