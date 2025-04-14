@@ -1,9 +1,23 @@
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'resgrid') THEN
+        CREATE DATABASE resgrid;
+    END IF;
+END
+$$;
 
-SELECT 'CREATE DATABASE resgrid'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'resgrid');
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'resgridoidc') THEN
+        CREATE DATABASE resgridoidc;
+    END IF;
+END
+$$;
 
-SELECT 'CREATE DATABASE resgridoidc'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'resgridoidc');
-
-SELECT 'CREATE DATABASE resgridworkers'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'resgridworkers');
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'resgridworkers') THEN
+        CREATE DATABASE resgridworkers;
+    END IF;
+END
+$$;
