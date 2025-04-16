@@ -98,10 +98,9 @@ services:
 
   redis:
     image: "redis:alpine"
-    command: redis-server --save 20 1 --loglevel warning
+    command: redis-server --save 20 1 --loglevel warning --requirepass resgrid123
     ports:
      - "6379:6379"
-     - "16379:16379"
     restart: always
     volumes:
       - ./docker-data/redis/data:/data
