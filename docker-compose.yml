@@ -86,7 +86,7 @@ services:
       rgmain:
         ipv4_address: 172.16.193.55
     volumes:
-      - ./docker-data/sql/:/var/lib/postgresql/data/
+      - ./docker-data/sql:/var/lib/postgresql/data/
       - ./db/create-databases.sh:/create-databases.sh
       - ./db/custom-entrypoint.sh:/custom-entrypoint.sh
     command: >
