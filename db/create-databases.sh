@@ -12,3 +12,4 @@ create_db() {
 create_db "resgrid"
 create_db "resgridoidc"
 create_db "resgridworkers"
+create_db "resgriddoc"

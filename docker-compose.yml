@@ -16,9 +16,8 @@ services:
       - redis
       - rabbitmq
       - worker
-      - mongodb
     environment:
-      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,api:80,mongodb:27017
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,api:80
       - WAIT_TIMEOUT=300
 
   api:
@@ -37,9 +36,8 @@ services:
       - redis
       - rabbitmq
       - worker
-      - mongodb
     environment:
-      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,events:80,mongodb:27017
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,events:80
       - WAIT_TIMEOUT=300
 
   events:
@@ -73,9 +71,8 @@ services:
       - db
       - redis
       - rabbitmq
-      - mongodb
     environment:
-      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,mongodb:27017
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672
       - WAIT_AFTER=90
       - WAIT_TIMEOUT=180
 
@@ -101,10 +98,13 @@ services:
 
   redis:
     image: "redis:alpine"
-    command: redis-server --save 60 1 --loglevel warning
+    command: redis-server --save 20 1 --loglevel warning
     ports:
      - "6379:6379"
+     - "16379:16379"
     restart: always
+    volumes:
+      - ./docker-data/redis/data:/data
     networks:
       rgmain:
         ipv4_address: 172.16.193.56
@@ -122,23 +122,6 @@ services:
       rgmain:
         ipv4_address: 172.16.193.57
 
-  mongodb:
-    image: mongo:4.4.18
-    ports:
-      - 27017:27017
-    restart: always
-    networks:
-      rgmain:
-        ipv4_address: 172.16.193.59
-    environment:
-      - MONGO_INITDB_DATABASE=resgrid
-      - MONGO_INITDB_ROOT_USERNAME=resgridUser
-      - MONGO_INITDB_ROOT_PASSWORD=Resgrid123!!
-    volumes:
-      - ./mongo-entrypoint:/docker-entrypoint-initdb.d
-      - ./docker-data/mongo/db:/data/configdb
-      - ./docker-data/mongo/configdb:/data/db
-
   caddy:
     image: caddy:2.0.0-alpine
     restart: always
@@ -151,7 +134,8 @@ services:
         rgmain:
           ipv4_address: 172.16.193.60
     volumes:
-      - ./docker-data/caddy/:/data
+      - ./docker-data/caddy/data/:/data
+      - ./docker-data/caddy/config/:/config
       - ./docker-data/caddy/Caddyfile:/etc/caddy/Caddyfile
 
 networks:
