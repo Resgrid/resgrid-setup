@@ -1,0 +1,331 @@
+# Docker Compose Configuration for Ambipar Response Canada - Resgrid Custom Build
+# Version: 1.0
+# Last Updated: November 2025
+
+version: '3.8'
+
+services:
+  # ===================================================================
+  # APPLICATION SERVICES
+  # ===================================================================
+
+  web:
+    image: "resgridllc/resgridwebcore:ambipar-latest"
+    container_name: resgrid-web-ambipar
+    ports:
+      - "5151:80"
+    env_file:
+      - .env
+      - .env.ambipar
+    restart: always
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.51
+    depends_on:
+      - api
+      - events
+      - db
+      - redis
+      - rabbitmq
+      - worker
+    environment:
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,api:80,ai:80
+      - WAIT_TIMEOUT=300
+      - ASPNETCORE_ENVIRONMENT=Development
+    volumes:
+      - ./logs/web:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  api:
+    image: "resgridllc/resgridwebservices:ambipar-latest"
+    container_name: resgrid-api-ambipar
+    ports:
+      - "5152:80"
+    env_file:
+      - .env
+      - .env.ambipar
+    restart: always
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.52
+    depends_on:
+      - events
+      - db
+      - redis
+      - rabbitmq
+      - worker
+      - ai
+    environment:
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,events:80,ai:80
+      - WAIT_TIMEOUT=300
+      - ASPNETCORE_ENVIRONMENT=Development
+    volumes:
+      - ./logs/api:/app/logs
+      - ./uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  events:
+    image: "resgridllc/resgridwebevents:ambipar-latest"
+    container_name: resgrid-events-ambipar
+    ports:
+      - "5153:80"
+    env_file:
+      - .env
+      - .env.ambipar
+    restart: always
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.53
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    environment:
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672
+      - WAIT_AFTER=120
+      - WAIT_TIMEOUT=300
+      - ASPNETCORE_ENVIRONMENT=Development
+    volumes:
+      - ./logs/events:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  ai:
+    image: "resgridllc/resgridai:ambipar-latest"
+    container_name: resgrid-ai-ambipar
+    ports:
+      - "5154:80"
+    env_file:
+      - .env
+      - .env.ambipar
+    restart: always
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.58
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    environment:
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672
+      - WAIT_TIMEOUT=300
+      - ASPNETCORE_ENVIRONMENT=Development
+    volumes:
+      - ./logs/ai:/app/logs
+      - ./ai-models:/app/models
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  integrations:
+    image: "resgridllc/resgridintegrations:ambipar-latest"
+    container_name: resgrid-integrations-ambipar
+    ports:
+      - "5155:80"
+    env_file:
+      - .env
+      - .env.ambipar
+    restart: always
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.59
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+      - api
+    environment:
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,api:80
+      - WAIT_TIMEOUT=300
+      - ASPNETCORE_ENVIRONMENT=Development
+    volumes:
+      - ./logs/integrations:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  worker:
+    image: "resgridllc/resgridworkersconsole:ambipar-latest"
+    container_name: resgrid-worker-ambipar
+    env_file:
+      - .env
+      - .env.ambipar
+    restart: always
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.54
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    environment:
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672
+      - WAIT_AFTER=90
+      - WAIT_TIMEOUT=180
+      - ASPNETCORE_ENVIRONMENT=Development
+    volumes:
+      - ./logs/worker:/app/logs
+
+  # ===================================================================
+  # INFRASTRUCTURE SERVICES
+  # ===================================================================
+
+  db:
+    image: 'postgres:16'
+    container_name: resgrid-db-ambipar
+    ports:
+      - 5432:5432
+    env_file:
+      - .env
+      - .env.ambipar
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.55
+    volumes:
+      - ./docker-data/sql:/var/lib/postgresql/data/
+      - ./db/create-databases.sh:/create-databases.sh
+      - ./db/custom-entrypoint.sh:/custom-entrypoint.sh
+      - ./db/ambipar-init.sql:/docker-entrypoint-initdb.d/99-ambipar.sql
+    command: >
+      sh -c "
+        chmod +x /custom-entrypoint.sh &&
+        chmod +x /create-databases.sh &&
+        /custom-entrypoint.sh
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: "redis:7-alpine"
+    container_name: resgrid-redis-ambipar
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD} --maxmemory 2gb --maxmemory-policy allkeys-lru
+    ports:
+     - "6379:6379"
+    restart: always
+    volumes:
+      - ./docker-data/redis/data:/data
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.56
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: resgrid-rabbitmq-ambipar
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+      - RABBITMQ_VM_MEMORY_HIGH_WATERMARK=1GB
+    ports:
+      - "5160:15672"  # Management UI
+      - "5159:5672"   # AMQP
+    restart: always
+    volumes:
+      - ./docker-data/rabbitmq/data:/var/lib/rabbitmq
+      - ./docker-data/rabbitmq/logs:/var/log/rabbitmq
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.57
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: resgrid-caddy-ambipar
+    restart: always
+    env_file:
+        - .env
+        - .env.ambipar
+    ports:
+      - 80:80
+      - 443:443
+    networks:
+        rgmain:
+          ipv4_address: 172.16.193.60
+    volumes:
+      - ./docker-data/caddy/data/:/data
+      - ./docker-data/caddy/config/:/config
+      - ./docker-data/caddy/Caddyfile.ambipar:/etc/caddy/Caddyfile
+    depends_on:
+      - web
+      - api
+      - events
+      - ai
+      - integrations
+
+  # ===================================================================
+  # OPTIONAL MONITORING SERVICES
+  # ===================================================================
+
+  # Uncomment for monitoring stack
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   container_name: resgrid-prometheus-ambipar
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+  #     - ./docker-data/prometheus:/prometheus
+  #   networks:
+  #     rgmain:
+  #       ipv4_address: 172.16.193.70
+  #   command:
+  #     - '--config.file=/etc/prometheus/prometheus.yml'
+  #     - '--storage.tsdb.path=/prometheus'
+  #   restart: always
+
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: resgrid-grafana-ambipar
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - GF_SECURITY_ADMIN_USER=admin
+  #     - GF_SECURITY_ADMIN_PASSWORD=Ambipar2025!
+  #   volumes:
+  #     - ./docker-data/grafana:/var/lib/grafana
+  #     - ./monitoring/grafana-dashboards:/etc/grafana/provisioning/dashboards
+  #   networks:
+  #     rgmain:
+  #       ipv4_address: 172.16.193.71
+  #   depends_on:
+  #     - prometheus
+  #   restart: always
+
+networks:
+  rgmain:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.16.193.0/24

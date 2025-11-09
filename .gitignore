@@ -1,0 +1,204 @@
+# ===================================================================
+# Resgrid Setup - Git Ignore Configuration
+# ===================================================================
+
+# -----------------------------------------------
+# --- Sensitive Configuration Files -------------
+# -----------------------------------------------
+
+# Environment variables (NEVER commit actual credentials!)
+.env
+.env.local
+.env.development
+.env.production
+.env.ambipar
+.env.*.local
+
+# Allow example files to be committed
+!.env.example
+!.env.*.example
+
+# -----------------------------------------------
+# --- Docker Data & Volumes ---------------------
+# -----------------------------------------------
+
+# SQL Database Data
+docker-data/sql/
+
+# Redis Data
+docker-data/redis/data/*.rdb
+docker-data/redis/data/*.aof
+
+# RabbitMQ Data
+docker-data/rabbitmq/
+
+# -----------------------------------------------
+# --- SSL Certificates & Private Keys -----------
+# -----------------------------------------------
+
+# Caddy SSL Certificates (generated automatically)
+docker-data/caddy/data/caddy/certificates/
+docker-data/caddy/data/caddy/pki/
+
+# Any private keys or certificates
+*.key
+*.crt
+*.pem
+*.p12
+*.pfx
+
+# Allow example certificate documentation
+!docs/**/*.crt
+!docs/**/*.key
+
+# -----------------------------------------------
+# --- Application Logs --------------------------
+# -----------------------------------------------
+
+logs/
+*.log
+*.log.*
+
+# -----------------------------------------------
+# --- Backups -----------------------------------
+# -----------------------------------------------
+
+backups/
+*.sql
+*.sql.gz
+*.dump
+backup-*.tar.gz
+backup-*.rdb
+
+# -----------------------------------------------
+# --- Uploads & User Data -----------------------
+# -----------------------------------------------
+
+uploads/
+docker-data/uploads/
+
+# -----------------------------------------------
+# --- Temporary Files ---------------------------
+# -----------------------------------------------
+
+*.tmp
+*.temp
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# -----------------------------------------------
+# --- IDE & Editor Files ------------------------
+# -----------------------------------------------
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+
+# -----------------------------------------------
+# --- Build Outputs -----------------------------
+# -----------------------------------------------
+
+bin/
+obj/
+out/
+build/
+dist/
+
+# -----------------------------------------------
+# --- Node Modules ------------------------------
+# -----------------------------------------------
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# -----------------------------------------------
+# --- Docker -----------------------------------
+# -----------------------------------------------
+
+# Docker Compose override (local customizations)
+docker-compose.override.yml
+docker-compose.local.yml
+
+# -----------------------------------------------
+# --- OS Generated Files ------------------------
+# -----------------------------------------------
+
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# -----------------------------------------------
+# --- Security & Secrets ------------------------
+# -----------------------------------------------
+
+# Secrets files
+secrets/
+.secrets
+*.secret
+
+# SSH Keys
+id_rsa
+id_rsa.pub
+*.ppk
+
+# GPG Keys
+*.gpg
+*.asc
+
+# -----------------------------------------------
+# --- Monitoring & Metrics ----------------------
+# -----------------------------------------------
+
+# Prometheus data
+docker-data/prometheus/
+
+# Grafana data
+docker-data/grafana/
+
+# -----------------------------------------------
+# --- Mail Server (if enabled) ------------------
+# -----------------------------------------------
+
+docker-data/dms/
+mailserver.env
+
+# -----------------------------------------------
+# --- Miscellaneous -----------------------------
+# -----------------------------------------------
+
+# Test coverage
+coverage/
+*.coverage
+htmlcov/
+
+# Package files
+*.nupkg
+*.snupkg
+
+# Local history
+.history/
