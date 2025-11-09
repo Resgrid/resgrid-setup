@@ -221,7 +221,7 @@ services:
   redis:
     image: "redis:7-alpine"
     container_name: resgrid-redis-ambipar
-    command: redis-server --save 20 1 --loglevel warning --requirepass resgrid123 --maxmemory 2gb --maxmemory-policy allkeys-lru
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD} --maxmemory 2gb --maxmemory-policy allkeys-lru
     ports:
      - "6379:6379"
     restart: always
@@ -240,8 +240,8 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: resgrid-rabbitmq-ambipar
     environment:
-      - RABBITMQ_DEFAULT_USER=resgrid
-      - RABBITMQ_DEFAULT_PASS=Resgrid321!
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
       - RABBITMQ_VM_MEMORY_HIGH_WATERMARK=1GB
     ports:
       - "5160:15672"  # Management UI
