@@ -77,7 +77,7 @@ services:
       - WAIT_TIMEOUT=180
 
   db:
-    image: 'postgres:latest'
+    image: "dhi.io/postgres:18-alpine3.22"
     ports:
       - 5432:5432
     env_file:
@@ -97,7 +97,7 @@ services:
       "
 
   redis:
-    image: "redis:alpine"
+    image: "dhi.io/redis:8-alpine3.23"
     command: redis-server --save 20 1 --loglevel warning --requirepass resgrid123
     ports:
      - "6379:6379"
@@ -109,7 +109,7 @@ services:
         ipv4_address: 172.16.193.56
 
   rabbitmq:
-    image: rabbitmq:3-management
+    image: "dhi.io/rabbitmq:4.3.0-debian13"
     environment:
       - RABBITMQ_DEFAULT_USER=resgrid
       - RABBITMQ_DEFAULT_PASS=Resgrid321!
@@ -122,7 +122,7 @@ services:
         ipv4_address: 172.16.193.57
 
   caddy:
-    image: caddy:2.0.0-alpine
+    image: "dhi.io/caddy:2.11.3-debian13"
     restart: always
     env_file:
         - .env
