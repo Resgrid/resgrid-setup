@@ -1,6 +1,0 @@
-services:
-  worker:
-    image: "resgridllc/resgridworkersconsole:latest"
-    env_file:
-      - .env
-    restart: always

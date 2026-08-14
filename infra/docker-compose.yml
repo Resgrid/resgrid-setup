@@ -1,0 +1,68 @@
+services:
+  redis:
+    image: "dhi.io/redis:8-alpine3.23"
+    env_file:
+      - ../.env
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD:-resgrid123}
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - ../docker-data/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a '$${REDIS_PASSWORD}' ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  rabbitmq:
+    image: "dhi.io/rabbitmq:4.3.0-debian13"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-resgrid}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-Resgrid321!}
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+
+  rustfs:
+    image: "rustfs/rustfs:latest"
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-RUSTFSADMIN}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-RUSTFSADMIN}
+    restart: always
+    ports:
+      - "9000:9000"
+    volumes:
+      - ../docker-data/rustfs:/data
+
+  rustfs-init:
+    image: "minio/mc:latest"
+    depends_on:
+      - rustfs
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set rustfs http://rustfs:9000 "$$RUSTFS_ACCESS_KEY" "$$RUSTFS_SECRET_KEY"; do
+          echo "waiting for rustfs..."; sleep 2;
+        done
+        mc mb --ignore-existing rustfs/resgrid-tts
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-RUSTFSADMIN}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-RUSTFSADMIN}
+
+  tileserver:
+    profiles: ["maps"]
+    image: "overv/openstreetmap-tile-server:latest"
+    command: run
+    restart: always
+    ports:
+      - "5156:80"
+    volumes:
+      - ../docker-data/osm:/data/database/
