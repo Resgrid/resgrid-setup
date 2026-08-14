@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: relay-data
+  namespace: resgrid
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: relay
+  namespace: resgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: relay
+  template:
+    metadata:
+      labels:
+        app: relay
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: relay
+          image: resgridllc/resgridrelay:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: resgrid-env
+          env:
+            - name: WAIT_HOSTS
+              value: api:80
+            - name: WAIT_TIMEOUT
+              value: "300"
+          ports:
+            - name: smtp
+              containerPort: 2525
+          volumeMounts:
+            - name: data
+              mountPath: /app/publish/data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: relay-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay
+  namespace: resgrid
+spec:
+  type: LoadBalancer
+  selector:
+    app: relay
+  ports:
+    - name: smtp
+      port: 25
+      targetPort: 2525

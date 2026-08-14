@@ -1,0 +1,50 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: resgrid
+spec:
+  ingressClassName: traefik
+  tls:
+    - secretName: resgrid-ingress-tls
+      hosts:
+        - rg.mylocal
+        - rgapi.mylocal
+        - rgevents.mylocal
+  rules:
+    - host: rg.mylocal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 80
+    - host: rgapi.mylocal
+      http:
+        paths:
+          - path: /tts/audio
+            pathType: Prefix
+            backend:
+              service:
+                name: tts
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80
+    - host: rgevents.mylocal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: events
+                port:
+                  number: 80

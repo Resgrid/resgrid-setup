@@ -1,0 +1,8 @@
+# Files that are bind-mounted into Linux containers must keep LF endings,
+# even when the repo is cloned on Windows.
+*.sh text eol=lf
+Caddyfile text eol=lf
+*.sql text eol=lf
+.env text eol=lf
+*.env text eol=lf
+*.yml text eol=lf

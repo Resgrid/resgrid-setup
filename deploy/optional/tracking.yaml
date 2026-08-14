@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tracker-gateway
+  namespace: resgrid
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tracker-gateway
+  template:
+    metadata:
+      labels:
+        app: tracker-gateway
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: tracker-gateway
+          image: resgridllc/resgridtrackergateway:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: resgrid-env
+          env:
+            - name: WAIT_HOSTS
+              value: postgres:5432,redis:6379,rabbitmq:5672
+            - name: WAIT_TIMEOUT
+              value: "300"
+          ports:
+            - {name: queclink-tcp, containerPort: 5004, protocol: TCP}
+            - {name: queclink-udp, containerPort: 5004, protocol: UDP}
+            - {name: gt06-tcp, containerPort: 5023, protocol: TCP}
+            - {name: gt06-udp, containerPort: 5023, protocol: UDP}
+            - {name: teltonika-tcp, containerPort: 5027, protocol: TCP}
+            - {name: teltonika-udp, containerPort: 5027, protocol: UDP}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tracker-gateway
+  namespace: resgrid
+spec:
+  type: LoadBalancer
+  selector:
+    app: tracker-gateway
+  ports:
+    - {name: queclink-tcp, port: 5004, targetPort: 5004, protocol: TCP}
+    - {name: queclink-udp, port: 5004, targetPort: 5004, protocol: UDP}
+    - {name: gt06-tcp, port: 5023, targetPort: 5023, protocol: TCP}
+    - {name: gt06-udp, port: 5023, targetPort: 5023, protocol: UDP}
+    - {name: teltonika-tcp, port: 5027, targetPort: 5027, protocol: TCP}
+    - {name: teltonika-udp, port: 5027, targetPort: 5027, protocol: UDP}

@@ -1,0 +1,254 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: web
+          image: resgridllc/resgridwebcore:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: resgrid-env
+          env:
+            - name: WAIT_HOSTS
+              value: postgres:5432,redis:6379,rabbitmq:5672,api:80
+            - name: WAIT_TIMEOUT
+              value: "300"
+          ports:
+            - name: http
+              containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: api
+          image: resgridllc/resgridwebservices:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: resgrid-env
+          env:
+            - name: WAIT_HOSTS
+              value: postgres:5432,redis:6379,rabbitmq:5672,events:80
+            - name: WAIT_TIMEOUT
+              value: "300"
+          ports:
+            - name: http
+              containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: events
+spec:
+  selector:
+    app: events
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: events
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: events
+  template:
+    metadata:
+      labels:
+        app: events
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: events
+          image: resgridllc/resgridwebevents:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: resgrid-env
+          env:
+            - name: WAIT_HOSTS
+              value: postgres:5432,redis:6379,rabbitmq:5672
+            - name: WAIT_AFTER
+              value: "120"
+            - name: WAIT_TIMEOUT
+              value: "300"
+          ports:
+            - name: http
+              containerPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: worker
+          image: resgridllc/resgridworkersconsole:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: resgrid-env
+          env:
+            - name: WAIT_HOSTS
+              value: postgres:5432,redis:6379,rabbitmq:5672
+            - name: WAIT_AFTER
+              value: "90"
+            - name: WAIT_TIMEOUT
+              value: "300"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tts
+spec:
+  selector:
+    app: tts
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tts
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tts
+  template:
+    metadata:
+      labels:
+        app: tts
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: tts
+          image: resgridllc/resgridwebtts:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: resgrid-env
+          env:
+            - name: ASPNETCORE_URLS
+              value: http://+:8080
+            - name: WAIT_HOSTS
+              value: redis:6379,rustfs:9000
+            - name: WAIT_TIMEOUT
+              value: "300"
+          ports:
+            - name: http
+              containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp
+spec:
+  selector:
+    app: mcp
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp
+  template:
+    metadata:
+      labels:
+        app: mcp
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      containers:
+        - name: mcp
+          image: resgridllc/resgridwebmcp:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: resgrid-env
+          env:
+            - name: WAIT_HOSTS
+              value: api:80
+            - name: WAIT_TIMEOUT
+              value: "300"
+          ports:
+            - name: http
+              containerPort: 8080
