@@ -18,8 +18,15 @@ https://{$NGINX_RESGRID_WEB_URL} {
 http://{$NGINX_RESGRID_API_URL} {
   encode gzip
 
-  reverse_proxy 172.16.193.52:80 {
-       header_up X-Real-IP {remote_host}
+  # Dispatch audio playback (Twilio fetches these) is served by the TTS container
+  handle /tts/audio/* {
+    reverse_proxy 172.16.193.58:8080
+  }
+
+  handle {
+    reverse_proxy 172.16.193.52:80 {
+         header_up X-Real-IP {remote_host}
+    }
   }
 }
 
@@ -27,8 +34,15 @@ https://{$NGINX_RESGRID_API_URL} {
   tls {$NGINX_LETSENCRYPT_EMAIL}
   encode gzip
 
-  reverse_proxy 172.16.193.52:80 {
-       header_up X-Real-IP {remote_host}
+  # Dispatch audio playback (Twilio fetches these) is served by the TTS container
+  handle /tts/audio/* {
+    reverse_proxy 172.16.193.58:8080
+  }
+
+  handle {
+    reverse_proxy 172.16.193.52:80 {
+         header_up X-Real-IP {remote_host}
+    }
   }
 }
 

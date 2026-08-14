@@ -1,0 +1,12 @@
+# Installer marker
+.setup-complete
+
+# Runtime data
+docker-data/sql/
+docker-data/rustfs/
+docker-data/redis/data/*
+!docker-data/redis/data/.gitkeep
+docker-data/caddy/data/*
+!docker-data/caddy/data/.gitkeep
+docker-data/caddy/config/*
+!docker-data/caddy/config/.gitkeep

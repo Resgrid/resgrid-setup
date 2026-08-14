@@ -2,7 +2,7 @@ services:
   web:
     image: "resgridllc/resgridwebcore:latest"
     ports:
-      - "5151:80"
+      - "127.0.0.1:5151:80"
     env_file:
       - .env
     restart: always
@@ -17,13 +17,13 @@ services:
       - rabbitmq
       - worker
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,api:80
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,api:80
       - WAIT_TIMEOUT=300
 
   api:
     image: "resgridllc/resgridwebservices:latest"
     ports:
-      - "5152:80"
+      - "127.0.0.1:5152:80"
     env_file:
       - .env
     restart: always
@@ -37,13 +37,13 @@ services:
       - rabbitmq
       - worker
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672,events:80
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672,events:80
       - WAIT_TIMEOUT=300
 
   events:
     image: "resgridllc/resgridwebevents:latest"
     ports:
-      - "5153:80"
+      - "127.0.0.1:5153:80"
     env_file:
       - .env
     restart: always
@@ -55,7 +55,7 @@ services:
       - redis
       - rabbitmq
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672
       - WAIT_AFTER=120
       - WAIT_TIMEOUT=300
 
@@ -72,16 +72,17 @@ services:
       - redis
       - rabbitmq
     environment:
-      - WAIT_HOSTS=db:1433,redis:6379,rabbitmq:15672
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672
       - WAIT_AFTER=90
       - WAIT_TIMEOUT=180
 
   db:
-    image: 'postgres:latest'
+    image: "dhi.io/postgres:18-alpine3.22"
     ports:
-      - 5432:5432
+      - "127.0.0.1:5432:5432"
     env_file:
       - .env
+    restart: always
     networks:
       rgmain:
         ipv4_address: 172.16.193.55
@@ -97,48 +98,162 @@ services:
       "
 
   redis:
-    image: "redis:alpine"
-    command: redis-server --save 20 1 --loglevel warning --requirepass resgrid123
+    image: "dhi.io/redis:8-alpine3.23"
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD:-resgrid123}
     ports:
-     - "6379:6379"
+     - "127.0.0.1:6379:6379"
     restart: always
+    volumes:
+      - ./docker-data/redis/data:/data
     networks:
       rgmain:
         ipv4_address: 172.16.193.56
 
   rabbitmq:
-    image: rabbitmq:3-management
+    image: "dhi.io/rabbitmq:4.3.0-debian13"
     environment:
-      - RABBITMQ_DEFAULT_USER=resgrid
-      - RABBITMQ_DEFAULT_PASS=Resgrid321!
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-resgrid}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-Resgrid321!}
     ports:
-      - "5160:15672"
-      - "5159:5672"
+      - "127.0.0.1:5160:15672"
+      - "127.0.0.1:5159:5672"
     restart: always
     networks:
       rgmain:
         ipv4_address: 172.16.193.57
 
-  tileserver:
-    image: overv/openstreetmap-tile-server
-    volumes:
-      - ./docker-data/osm:/data/database/
-    restart: always
+  tts:
+    image: "resgridllc/resgridwebtts:latest"
     ports:
-      - "5154:80"
+      - "127.0.0.1:5154:8080"
+    env_file:
+      - .env
+    restart: always
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.58
+    depends_on:
+      - redis
+      - rustfs
+      - rustfs-init
+    environment:
+      # The TTS image listens on 8080 as a non-root user; must override the
+      # global ASPNETCORE_URLS=:80 coming from .env
+      - ASPNETCORE_URLS=http://+:8080
+
+  mcp:
+    # NOTE: the MCP HTTP endpoint is unauthenticated (auth happens inside the
+    # protocol against the Resgrid API). Keep port 5155 LAN-only.
+    image: "resgridllc/resgridwebmcp:latest"
+    ports:
+      - "127.0.0.1:5155:8080"
+    env_file:
+      - .env
+    restart: always
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.59
+    depends_on:
+      - api
+    environment:
+      - WAIT_HOSTS=api:80
+      - WAIT_TIMEOUT=300
+
+  rustfs:
+    # S3-compatible object storage, used by tts (dispatch audio) and available
+    # as general internal bucket storage. Not exposed on the host by default.
+    image: "rustfs/rustfs:latest"
+    restart: always
+    environment:
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-RUSTFSADMIN}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-RUSTFSADMIN}
+    volumes:
+      - ./docker-data/rustfs:/data
     networks:
       rgmain:
         ipv4_address: 172.16.193.61
-    command: "run"
+    # Uncomment to reach the S3 API / console from the host:
+    #ports:
+    #  - "5156:9000"
+
+  rustfs-init:
+    # One-shot job: waits for rustfs, then creates the TTS bucket.
+    # Bucket name must match RESGRID__TtsConfig__S3Bucket in .env
+    image: "minio/mc:latest"
+    depends_on:
+      - rustfs
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set rustfs http://172.16.193.61:9000 "$$RUSTFS_ACCESS_KEY" "$$RUSTFS_SECRET_KEY"; do
+          echo "waiting for rustfs..."; sleep 2;
+        done
+        mc mb --ignore-existing rustfs/resgrid-tts
+    environment:
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY:-RUSTFSADMIN}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY:-RUSTFSADMIN}
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.62
+
+  tracker-gateway:
+    # Optional GPS tracker gateway; start with: docker compose --profile tracking up -d
+    # Also requires RESGRID__UnitTrackingConfig__* settings in .env
+    profiles: ["tracking"]
+    image: "resgridllc/resgridtrackergateway:latest"
+    env_file:
+      - .env
+    restart: always
+    ports:
+      - "5004:5004/tcp"   # Queclink
+      - "5004:5004/udp"
+      - "5023:5023/tcp"   # GT06
+      - "5023:5023/udp"
+      - "5027:5027/tcp"   # Teltonika
+      - "5027:5027/udp"
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.63
+    depends_on:
+      - db
+      - redis
+      - rabbitmq
+    environment:
+      - WAIT_HOSTS=db:5432,redis:6379,rabbitmq:15672
+      - WAIT_TIMEOUT=300
+
+  relay:
+    # Optional inbound-email dispatch relay; start with: docker compose --profile relay up -d
+    # Also requires the RESGRID__RELAY__* settings in .env
+    profiles: ["relay"]
+    image: "resgridllc/resgridrelay:latest"
+    env_file:
+      - .env
+    restart: always
+    ports:
+      - "25:2525"
+    networks:
+      rgmain:
+        ipv4_address: 172.16.193.64
+    depends_on:
+      - api
+    environment:
+      - WAIT_HOSTS=api:80
+      - WAIT_TIMEOUT=300
+    volumes:
+      # processed-message dedupe store, saved .eml files and the token cache.
+      # Named volume (not a bind mount) so the non-root container user can write.
+      - relay-data:/app/publish/data
 
   caddy:
-    image: caddy:2.0.0-alpine
+    image: "dhi.io/caddy:2.11.3-debian13"
     restart: always
     env_file:
         - .env
     ports:
-      - 80:80
-      - 443:443
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:443:443"
     networks:
         rgmain:
           ipv4_address: 172.16.193.60
@@ -146,6 +261,9 @@ services:
       - ./docker-data/caddy/data/:/data
       - ./docker-data/caddy/config/:/config
       - ./docker-data/caddy/Caddyfile:/etc/caddy/Caddyfile
+
+volumes:
+  relay-data:
 
 networks:
   rgmain:
