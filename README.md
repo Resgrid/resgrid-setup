@@ -185,6 +185,8 @@ docker compose pull && docker compose up -d   # upgrade to latest images (worker
 - *Containers restart-loop on first boot* — normal for a minute or two while waiting for PostgreSQL/RabbitMQ; check `docker compose logs -f worker` for migration progress.
 - *Ports 80/443 already in use* — stop the conflicting service or edit the `caddy` ports in [docker-compose.yml](docker-compose.yml).
 - *`db` scripts fail with `\r: not found`* — the shell scripts were checked out with Windows line endings. This repo's `.gitattributes` prevents that; re-clone or run `git checkout -- db/`.
+- *Worker logs `Method ConstraintExists is not supported by the connectionless processor`, or migrations "finish" but no tables exist* — `RESGRID__DataConfig__CoreConnectionString` is empty, so the migration runner never connects. Set it to the same value as `RESGRID__DataConfig__ConnectionString` and restart the worker. SQL Server setups hit this most, since older templates only set `ConnectionString`; set `RESGRID__DataConfig__DatabaseType=0` there too.
+- *`Keyword not supported: 'host'`* — a PostgreSQL connection string is being read as SQL Server. Set `RESGRID__DataConfig__DatabaseType=1` (plus `DocDatabaseType`, `OidcConfig__DatabaseType` and `WorkerConfig__DatabaseType`, as in this repo's `.env`).
 
 ## Repository layout
 
