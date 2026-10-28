@@ -1,0 +1,113 @@
+# RICK node 4 (infra): Redis, RabbitMQ, RustFS object storage and the
+# offline map tile server (profile "maps").
+# Manage with ./rick.sh on this node.
+name: rick-infra
+
+services:
+  redis:
+    image: "dhi.io/redis:8-alpine3.23"
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no", "--loglevel", "warning", "--requirepass", "${REDIS_PASSWORD}"]
+    ports:
+      - "${RICK_INFRA_HOST}:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  rabbitmq:
+    image: "dhi.io/rabbitmq:4.3.0-debian13"
+    hostname: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "${RICK_INFRA_HOST}:5672:5672"
+      # Management UI: http://<infra node>:15672
+      - "${RICK_INFRA_HOST}:15672:15672"
+    volumes:
+      - ../../rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ../../rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  rustfs:
+    image: "rustfs/rustfs:latest"
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+    ports:
+      - "${RICK_INFRA_HOST}:9000:9000"
+    volumes:
+      - rustfs-data:/data
+
+  rustfs-init:
+    # One-shot: waits for RustFS, then creates the buckets.
+    image: "rclone/rclone:1"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        n=0
+        until rclone mkdir rustfs:resgrid-tts; do
+          n=$$((n+1)); [ "$$n" -ge 90 ] && echo "RustFS did not come up" && exit 1
+          echo "waiting for rustfs..."; sleep 2
+        done
+        rclone mkdir rustfs:resgrid-imports
+        rclone mkdir rustfs:resgrid-search
+        echo "Buckets ready."
+    environment:
+      RCLONE_CONFIG: /tmp/rclone.conf
+      RCLONE_CONFIG_RUSTFS_TYPE: s3
+      RCLONE_CONFIG_RUSTFS_PROVIDER: Other
+      RCLONE_CONFIG_RUSTFS_ENDPOINT: http://rustfs:9000
+      RCLONE_CONFIG_RUSTFS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY}
+      RCLONE_CONFIG_RUSTFS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY}
+      RCLONE_CONFIG_RUSTFS_FORCE_PATH_STYLE: "true"
+    depends_on:
+      - rustfs
+
+  clamav:
+    # Virus scanning of uploaded files (profile "clamav", feature "scanning").
+    # Ships with virus signatures and updates them while online.
+    profiles: ["clamav"]
+    image: "clamav/clamav-debian:stable"
+    restart: unless-stopped
+    volumes:
+      - clamav-db:/var/lib/clamav
+    ports:
+      - "${RICK_INFRA_HOST}:3310:3310"
+
+  tileserver:
+    # Offline map tiles (profile "maps"). Import a region first with
+    # ./rick.sh maps-import. Caddy on the edge node serves them at
+    # https://<web host>/tiles/{z}/{x}/{y}.png.
+    profiles: ["maps"]
+    image: "overv/openstreetmap-tile-server:latest"
+    restart: unless-stopped
+    command: ["run"]
+    shm_size: 192m
+    environment:
+      THREADS: "4"
+    ports:
+      - "${RICK_INFRA_HOST}:5156:80"
+    volumes:
+      - osm-data:/data/database
+      - osm-tiles:/data/tiles
+
+volumes:
+  redis-data:
+  rabbitmq-data:
+  rustfs-data:
+  osm-data:
+  osm-tiles:
+  clamav-db:

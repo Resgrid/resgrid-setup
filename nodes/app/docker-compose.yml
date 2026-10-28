@@ -1,0 +1,91 @@
+# RICK node 2 (app): API, worker (schema migrations + background jobs),
+# text-to-speech and MCP. Optional: GPS tracker gateway, email relay.
+# Manage with ./rick.sh on this node.
+name: rick-app
+
+x-resgrid-app: &resgrid-app
+  env_file: [../../.env]
+  restart: unless-stopped
+  networks: [rick]
+  # Server-side calls to the public URLs go to Caddy on the edge node.
+  extra_hosts:
+    - "${RESGRID_WEB_HOST}:${RICK_EDGE_HOST}"
+    - "${RESGRID_API_HOST}:${RICK_EDGE_HOST}"
+    - "${RESGRID_EVENTS_HOST}:${RICK_EDGE_HOST}"
+  volumes:
+    - ../../certs/ca:/usr/local/share/resgrid-ca:ro
+  # Local copy of the search index (feature "search"), owned by the
+  # images' non-root user.
+  tmpfs:
+    - /data/search:uid=65532,gid=65532,mode=0700
+
+x-wait-backends: &wait-backends
+  # After a power cycle the containers retry until the data and infra nodes
+  # are up.
+  WAIT_HOSTS: "${RICK_DATA_HOST}:5432,${RICK_INFRA_HOST}:6379,${RICK_INFRA_HOST}:5672"
+  WAIT_TIMEOUT: "600"
+
+services:
+  api:
+    <<: *resgrid-app
+    image: "${RESGRID_IMAGE_REPO:-resgridllc}/resgridwebservices:${RESGRID_IMAGE_TAG:-latest}"
+    ports:
+      - "${RICK_APP_HOST}:5152:8080"
+    environment:
+      <<: *wait-backends
+
+  worker:
+    <<: *resgrid-app
+    image: "${RESGRID_IMAGE_REPO:-resgridllc}/resgridworkersconsole:${RESGRID_IMAGE_TAG:-latest}"
+    environment:
+      <<: *wait-backends
+
+  tts:
+    <<: *resgrid-app
+    image: "${RESGRID_IMAGE_REPO:-resgridllc}/resgridwebtts:${RESGRID_IMAGE_TAG:-latest}"
+    ports:
+      - "${RICK_APP_HOST}:5154:8080"
+
+  mcp:
+    # Unauthenticated HTTP endpoint (users log in inside the protocol):
+    # bound to this node's loopback only.
+    <<: *resgrid-app
+    image: "${RESGRID_IMAGE_REPO:-resgridllc}/resgridwebmcp:${RESGRID_IMAGE_TAG:-latest}"
+    ports:
+      - "127.0.0.1:5155:8080"
+    environment:
+      WAIT_HOSTS: "api:8080"
+      WAIT_TIMEOUT: "600"
+
+  tracker-gateway:
+    <<: *resgrid-app
+    profiles: ["tracking"]
+    image: "${RESGRID_IMAGE_REPO:-resgridllc}/resgridtrackergateway:${RESGRID_IMAGE_TAG:-latest}"
+    ports:
+      - "5004:5004/tcp"   # Queclink
+      - "5004:5004/udp"
+      - "5023:5023/tcp"   # GT06
+      - "5023:5023/udp"
+      - "5027:5027/tcp"   # Teltonika
+      - "5027:5027/udp"
+    environment:
+      <<: *wait-backends
+
+  relay:
+    <<: *resgrid-app
+    profiles: ["relay"]
+    image: "${RESGRID_IMAGE_REPO:-resgridllc}/resgridrelay:${RESGRID_IMAGE_TAG:-latest}"
+    ports:
+      - "25:2525"
+    volumes:
+      - ../../certs/ca:/usr/local/share/resgrid-ca:ro
+      - relay-data:/app/publish/data
+    environment:
+      WAIT_HOSTS: "api:8080"
+      WAIT_TIMEOUT: "600"
+
+volumes:
+  relay-data:
+
+networks:
+  rick:

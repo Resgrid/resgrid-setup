@@ -1,167 +1,398 @@
 #!/usr/bin/env bash
-# Configure one shared Resgrid Incident Command Kit checkout. Run once, then
-# securely copy the configured checkout (including .env) to all three nodes.
+#
+# Resgrid Incident Command Kit (RICK): kit configuration.
+#
+# First run, on rick1 or any Linux/macOS/WSL computer, while you have internet:
+#   ./setup.sh
+# It writes .env (every password, key and certificate for the whole kit),
+# the local certificate authority in certs/, and dns/dnsmasq.conf. Copy the
+# configured checkout to every node afterwards and start the kit
+# (./rick.sh rollout does both).
+#
+# Every later run upgrades and repairs the configuration: keeps your settings,
+# secrets and data, adds settings new versions need, regenerates derived files,
+# and on a kit node continues with ./rick.sh rollout (copy to every node, pull
+# images when online, start, wait for the database upgrade, offer the new
+# optional features). ./rick.sh upgrade = git pull + this.
+#
+# Non-interactive example:
+#   RICK_EDGE_HOST=192.168.50.11 RICK_APP_HOST=192.168.50.12 \
+#   RICK_DATA_HOST=192.168.50.13 RICK_INFRA_HOST=192.168.50.14 \
+#   RICK_ROUTER_IP=192.168.50.1 RESGRID_DOMAIN=rick.internal ./setup.sh
+#
+# Other variables:
+#   RESGRID_WEB_HOST / RESGRID_API_HOST / RESGRID_EVENTS_HOST
+#                          full hostnames (default rg./rgapi./rgevents. + RESGRID_DOMAIN)
+#   RESGRID_TLS_CERT_FILE / RESGRID_TLS_KEY_FILE
+#                          a publicly trusted certificate covering the three
+#                          hostnames (needed by the Android apps), see README.md
+#   RICK_ROLLOUT=0|1       after configuring, run ./rick.sh rollout or not
+#                          (default: yes on a re-run from a kit node, asked on
+#                          the first run)
+#   RESGRID_FEATURES       optional features for the rollout (see rick.sh)
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ROOT"
+cd "$(dirname "$0")"
 
 info() { printf '==> %s\n' "$*"; }
-die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'Warning: %s\n' "$*" >&2; }
+die()  { printf 'Error: %s\n' "$*" >&2; exit 1; }
 need_cmd() { command -v "$1" >/dev/null 2>&1 || die "'$1' is required. $2"; }
-
+interactive() { [ "${RESGRID_NONINTERACTIVE:-0}" != 1 ] && { : </dev/tty >/dev/tty; } 2>/dev/null; }
 prompt() {
-  local question="$1" default="$2" answer=""
-  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-    printf '%s [%s]: ' "$question" "$default" >/dev/tty
-    IFS= read -r answer </dev/tty || answer=""
+  local q="$1" def="$2" ans=""
+  if interactive; then
+    printf '%s [%s]: ' "$q" "$def" >/dev/tty
+    IFS= read -r ans </dev/tty || ans=""
   fi
-  printf '%s' "${answer:-$default}"
+  printf '%s' "${ans:-$def}"
 }
-
 rand_alnum() {
-  local length="$1" value=""
-  while [ "${#value}" -lt "$length" ]; do
-    value="${value}$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9')"
-  done
-  printf '%s' "${value:0:length}"
+  local n="$1" s=""
+  while [ "${#s}" -lt "$n" ]; do s="${s}$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9')"; done
+  printf '%s' "${s:0:$n}"
 }
-
 rand_upper() {
-  local length="$1" value=""
-  while [ "${#value}" -lt "$length" ]; do
-    value="${value}$(openssl rand -base64 48 | tr -dc 'A-Z0-9')"
-  done
-  printf '%s' "${value:0:length}"
+  local n="$1" s=""
+  while [ "${#s}" -lt "$n" ]; do s="${s}$(openssl rand -base64 48 | tr -dc 'A-Z0-9')"; done
+  printf '%s' "${s:0:$n}"
 }
-
+has_env() { grep -q "^$1=" .env; }
+get_env() { grep "^$1=" .env 2>/dev/null | head -n 1 | cut -d= -f2- || true; }
+sed_escape() { local v="$1"; v="${v//\\/\\\\}"; v="${v//&/\\&}"; v="${v//|/\\|}"; printf '%s' "$v"; }
 set_env() {
-  local key="$1" value="$2"
-  value="${value//\\/\\\\}"
-  value="${value//&/\\&}"
-  grep -q "^${key}=" .env || die "Key '${key}' is missing from .env."
-  sed -i.sedbak "s|^${key}=.*|${key}=${value}|" .env
+  has_env "$1" || die "Key '$1' is missing from .env."
+  sed -i.sedbak "s|^$1=.*|$1=$(sed_escape "$2")|" .env
   rm -f .env.sedbak
 }
+upsert_env() { if has_env "$1"; then set_env "$1" "$2"; else printf '%s=%s\n' "$1" "$2" >> .env; fi; }
+is_placeholder() { case "$1" in *[Cc][Hh][Aa][Nn][Gg][Ee][Mm][Ee]*|"") return 0 ;; *) return 1 ;; esac; }
+valid_ip() { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 
-strip_scheme() { printf '%s' "$1" | sed -e 's|^https://||' -e 's|^http://||' -e 's|/.*$||'; }
-
-need_cmd openssl "Install it with: sudo apt install openssl"
-need_cmd sed "Install it with: sudo apt install sed"
-[ -f .env ] || die "Run this script from a checkout of the rick branch."
-[ ! -f .setup-complete ] || die "This kit is already configured. Preserve .env unless you intend to invalidate its credentials and encryption keys."
-
-printf '\nResgrid Incident Command Kit configuration\n\n'
-WEB_URL="${RESGRID_WEB_URL:-$(prompt 'Web hostname' 'rg.rick.local')}"
-API_URL="${RESGRID_API_URL:-$(prompt 'API hostname' 'rgapi.rick.local')}"
-EVENTS_URL="${RESGRID_EVENTS_URL:-$(prompt 'Events hostname' 'rgevents.rick.local')}"
-LE_EMAIL="${RESGRID_LETSENCRYPT_EMAIL:-$(prompt "Let's Encrypt email ('internal' for an offline kit)" 'internal')}"
-WEB_NODE="${RESGRID_RICK_WEB_HOST:-$(prompt 'Web/API node LAN address' '192.168.50.11')}"
-INFRA_NODE="${RESGRID_RICK_INFRA_HOST:-$(prompt 'Infrastructure node LAN address' '192.168.50.12')}"
-DATABASE_NODE="${RESGRID_RICK_DATABASE_HOST:-$(prompt 'Database node LAN address' '192.168.50.13')}"
-
-WEB_URL="$(strip_scheme "$WEB_URL")"
-API_URL="$(strip_scheme "$API_URL")"
-EVENTS_URL="$(strip_scheme "$EVENTS_URL")"
-
-info "Generating credentials and OpenIddict certificates"
-PG_USER="resgrid"
-PG_PASS="$(rand_alnum 32)"
-REDIS_PASS="$(rand_alnum 32)"
-RABBIT_USER="resgrid"
-RABBIT_PASS="$(rand_alnum 32)"
-RUST_ACCESS="$(rand_upper 20)"
-RUST_SECRET="$(rand_upper 40)"
-SYSTEM_API_KEY="$(rand_alnum 48)"
-
-CERT_DIR="$(mktemp -d)"
-trap 'rm -rf "$CERT_DIR"' EXIT
-
-openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-  -keyout "$CERT_DIR/enc.key" -out "$CERT_DIR/enc.crt" \
-  -subj '/CN=Resgrid OIDC Server Encryption Certificate' \
-  -addext 'keyUsage=keyEncipherment' >/dev/null 2>&1
-openssl pkcs12 -export -out "$CERT_DIR/enc.pfx" -inkey "$CERT_DIR/enc.key" -in "$CERT_DIR/enc.crt" -passout pass:
-OIDC_ENC_CERT="$(openssl base64 -A -in "$CERT_DIR/enc.pfx")"
-
-openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-  -keyout "$CERT_DIR/sig.key" -out "$CERT_DIR/sig.crt" \
-  -subj '/CN=Resgrid OIDC Server Signing Certificate' \
-  -addext 'keyUsage=digitalSignature' >/dev/null 2>&1
-openssl pkcs12 -export -out "$CERT_DIR/sig.pfx" -inkey "$CERT_DIR/sig.key" -in "$CERT_DIR/sig.crt" -passout pass:
-OIDC_SIGN_CERT="$(openssl base64 -A -in "$CERT_DIR/sig.pfx")"
-
-pg_conn() {
-  printf 'User ID=%s;Password=%s;Host=%s;Port=5432;Database=%s;Pooling=true;Connection Lifetime=0;Include Error Detail=true;' \
-    "$PG_USER" "$PG_PASS" "$DATABASE_NODE" "$1"
+# OpenIddict signing and encryption certificates: PKCS#12 with an empty
+# password, base64 encoded (Core loads them without a password).
+oidc_cert() { # oidc_cert <name> <key usage>
+  local tmp out
+  tmp="$(mktemp -d)"
+  openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+    -keyout "$tmp/$1.key" -out "$tmp/$1.crt" \
+    -subj "/CN=Resgrid OIDC Server $1 Certificate" -addext "keyUsage=$2" >/dev/null 2>&1
+  openssl pkcs12 -export -out "$tmp/$1.pfx" -inkey "$tmp/$1.key" -in "$tmp/$1.crt" -passout pass: >/dev/null 2>&1
+  out="$(openssl base64 -A -in "$tmp/$1.pfx")"
+  rm -rf "$tmp"
+  printf '%s' "$out"
 }
 
-set_env RICK_WEB_HOST "$WEB_NODE"
-set_env RICK_INFRA_HOST "$INFRA_NODE"
-set_env RICK_DATABASE_HOST "$DATABASE_NODE"
-set_env NGINX_RESGRID_WEB_URL "$WEB_URL"
-set_env NGINX_RESGRID_API_URL "$API_URL"
-set_env NGINX_RESGRID_EVENTS_URL "$EVENTS_URL"
-set_env NGINX_LETSENCRYPT_EMAIL "$LE_EMAIL"
-set_env POSTGRES_USER "$PG_USER"
-set_env POSTGRES_PASSWORD "$PG_PASS"
-set_env REDIS_PASSWORD "$REDIS_PASS"
-set_env RABBITMQ_USER "$RABBIT_USER"
-set_env RABBITMQ_PASSWORD "$RABBIT_PASS"
-set_env RUSTFS_ACCESS_KEY "$RUST_ACCESS"
-set_env RUSTFS_SECRET_KEY "$RUST_SECRET"
-set_env RESGRID__SystemBehaviorConfig__ResgridBaseUrl "https://$WEB_URL"
-set_env RESGRID__SystemBehaviorConfig__ResgridApiBaseUrl "https://$API_URL"
-set_env RESGRID__SystemBehaviorConfig__ResgridEventingBaseUrl "https://$EVENTS_URL"
-set_env RESGRID__SystemBehaviorConfig__ExternalLinkUrlParamPassphrase "$(rand_alnum 24)"
-set_env RESGRID__SystemBehaviorConfig__ExternalAudioUrlParamPasshprase "$(rand_alnum 24)"
-set_env RESGRID__SystemBehaviorConfig__ApiTokenEncryptionPassphrase "$(rand_alnum 24)"
-set_env RESGRID__SystemBehaviorConfig__FullHealthCheckKey "$(rand_alnum 32)"
-set_env RESGRID__SecurityConfig__EncryptionKey "$(rand_alnum 32)"
-set_env RESGRID__SecurityConfig__EncryptionSaltValue "$(rand_alnum 24)"
-set_env RESGRID__SecurityConfig__SystemApiKey "$SYSTEM_API_KEY"
-set_env RESGRID__CacheConfig__RedisConnectionString "$INFRA_NODE:6379,Password=$REDIS_PASS,allowAdmin=True"
-set_env RESGRID__DataConfig__ConnectionString "$(pg_conn resgrid)"
-set_env RESGRID__DataConfig__CoreConnectionString "$(pg_conn resgrid)"
-set_env RESGRID__DataConfig__DocumentConnectionString "$(pg_conn resgriddoc)"
-set_env RESGRID__OidcConfig__ConnectionString "$(pg_conn resgridoidc)"
-set_env RESGRID__OidcConfig__EncryptionCert "$OIDC_ENC_CERT"
-set_env RESGRID__OidcConfig__SigningCert "$OIDC_SIGN_CERT"
-set_env RESGRID__JwtConfig__EventsClientSecret "$(rand_alnum 48)"
-set_env RESGRID__ApiConfig__BypassSslChecks "$([ "$LE_EMAIL" = internal ] && printf true || printf false)"
-set_env RESGRID__ServiceBusConfig__RabbitHostname "$INFRA_NODE"
-set_env RESGRID__ServiceBusConfig__RabbitUsername "$RABBIT_USER"
-set_env RESGRID__ServiceBusConfig__RabbbitPassword "$RABBIT_PASS"
-set_env RESGRID__WorkerConfig__WorkerDbConnectionString "$(pg_conn resgridworkers)"
-set_env RESGRID__WorkerConfig__PayloadKey "$(rand_alnum 96)"
-set_env RESGRID__TtsConfig__ServiceBaseUrl 'http://tts:8080'
-set_env RESGRID__TtsConfig__PlaybackBaseUrl "https://$API_URL"
-set_env RESGRID__TtsConfig__StaticPromptAdminKey "$(rand_alnum 32)"
-set_env RESGRID__TtsConfig__S3Endpoint "http://$INFRA_NODE:9000"
-set_env RESGRID__TtsConfig__S3AccessKey "$RUST_ACCESS"
-set_env RESGRID__TtsConfig__S3SecretKey "$RUST_SECRET"
-set_env RESGRID__UnitTrackingConfig__CredentialPepper "$(rand_alnum 48)"
-set_env RESGRID__RELAY__Resgrid__BaseUrl 'http://api:80'
-set_env RESGRID__RELAY__Resgrid__SystemApiKey "$SYSTEM_API_KEY"
-set_env RESGRID__RELAY__Resgrid__ClientSecret "$(rand_alnum 32)"
-set_env RESGRID__RELAY__Smtp__DepartmentAddressDomains__0 "dispatch.$WEB_URL"
+# The local certificate authority (kept when it exists).
+make_ca() {
+  mkdir -p certs/ca certs/private certs/site dns
+  [ -f certs/ca/resgrid-root-ca.crt ] && [ -f certs/private/resgrid-root-ca.key ] && return 0
+  info "Creating the Resgrid local certificate authority (10 year validity)"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -sha256 -days 3650 -nodes \
+    -keyout certs/private/resgrid-root-ca.key -out certs/ca/resgrid-root-ca.crt \
+    -subj "/O=Resgrid self-hosted/CN=Resgrid Local CA $(get_env RESGRID_WEB_HOST)" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -addext "subjectKeyIdentifier=hash" >/dev/null 2>&1 || die "Creating the local CA failed."
+  chmod 600 certs/private/resgrid-root-ca.key
+  chmod 644 certs/ca/resgrid-root-ca.crt
+}
 
-chmod 600 .env
-mkdir -p docker-data/postgres docker-data/redis docker-data/rustfs docker-data/osm docker-data/caddy/data docker-data/caddy/config
-date > .setup-complete
-
-cat <<EOF
-
-Configuration complete.
-
-1. Securely copy this entire checkout to all three nodes. The .env file must
-   be identical on every node and must be protected as a secret.
-2. On the database node ($DATABASE_NODE):  ./rick.sh database start
-3. On the infra node ($INFRA_NODE):        ./rick.sh infra start
-4. After those are healthy, on the web node ($WEB_NODE): ./rick.sh web start
-5. Follow first-run migrations on the web node: ./rick.sh web logs worker
-
-Clients must resolve these names to $WEB_NODE:
-  $WEB_URL $API_URL $EVENTS_URL
+# DNS for the optional dnsmasq on the edge node (profile "dns"), derived from
+# .env on every run.
+write_dns() {
+  local edge router
+  edge="$(get_env RICK_EDGE_HOST)"
+  router="$(get_env RICK_ROUTER_IP)"; [ -n "$router" ] || router="${edge%.*}.1"
+  mkdir -p dns
+  cat > dns/dnsmasq.conf <<EOF
+# Generated by setup.sh. Answers the Resgrid hostnames for the kit; other
+# names are forwarded to the hotspot router (they fail while offline).
+bind-interfaces
+listen-address=$edge
+no-resolv
+no-hosts
+server=$router
+address=/$(get_env RESGRID_WEB_HOST)/$edge
+address=/$(get_env RESGRID_API_HOST)/$edge
+address=/$(get_env RESGRID_EVENTS_HOST)/$edge
 EOF
+}
+
+# Is this computer one of the kit nodes (or told to act as one)?
+kit_node() { [ -n "$(./rick.sh role 2>/dev/null | tr -d '[:space:]')" ]; }
+
+# --------------------------------------------- configuration: new install ---
+
+configure_new() {
+  cat <<'EOF'
+
+  Resgrid Incident Command Kit (RICK) - kit configuration
+
+  Four nodes on the kit LAN (fixed addresses, e.g. DHCP reservations on the
+  hotspot router):
+    rick1 edge   Caddy + web app + events      (every client connects here)
+    rick2 app    API + worker + text-to-speech + MCP
+    rick3 data   PostgreSQL
+    rick4 infra  Redis + RabbitMQ + RustFS + offline map tiles
+  Smaller kits can give several roles the same address.
+
+EOF
+  local edge app data infra router lan domain web api events ip
+  edge="${RICK_EDGE_HOST:-$(prompt 'rick1 (edge) address' '192.168.50.11')}"
+  app="${RICK_APP_HOST:-$(prompt 'rick2 (app) address' '192.168.50.12')}"
+  data="${RICK_DATA_HOST:-$(prompt 'rick3 (data) address' '192.168.50.13')}"
+  infra="${RICK_INFRA_HOST:-$(prompt 'rick4 (infra) address' '192.168.50.14')}"
+  router="${RICK_ROUTER_IP:-$(prompt 'Hotspot router address' "${edge%.*}.1")}"
+  for ip in "$edge" "$app" "$data" "$infra" "$router"; do valid_ip "$ip" || die "'$ip' is not an IPv4 address."; done
+  lan="${edge%.*}.0"
+
+  domain="${RESGRID_DOMAIN:-}"
+  if [ -z "${RESGRID_WEB_HOST:-}" ] && [ -z "$domain" ]; then
+    printf '\n%s\n%s\n%s\n\n' \
+      "  Hostnames: rg.<domain>, rgapi.<domain>, rgevents.<domain>. Use rick.internal for a" \
+      "  kit with the local CA, or a subdomain you own (e.g. rick.yourdept.org) if you will" \
+      "  install a publicly trusted certificate for the Android apps (./rick.sh cert)."
+    domain="$(prompt 'Kit domain' 'rick.internal')"
+  fi
+  web="${RESGRID_WEB_HOST:-rg.$domain}"
+  api="${RESGRID_API_HOST:-rgapi.$domain}"
+  events="${RESGRID_EVENTS_HOST:-rgevents.$domain}"
+
+  printf '\n'
+  info "Kit LAN $lan/24, router $router"
+  info "Web https://$web  API https://$api  Events https://$events  (all on $edge)"
+
+  info "Generating passwords, keys and certificates"
+  cp .env.example .env
+  chmod 600 .env
+
+  local pg_pass redis_pass rabbit_pass rust_access rust_secret system_api_key section
+  pg_pass="$(rand_alnum 32)"
+  redis_pass="$(rand_alnum 32)"
+  rabbit_pass="$(rand_alnum 32)"
+  rust_access="$(rand_upper 20)"
+  rust_secret="$(rand_upper 40)"
+  system_api_key="$(rand_alnum 48)"
+  pg_conn() {
+    printf 'User ID=resgrid;Password=%s;Host=%s;Port=5432;Database=%s;Pooling=true;Connection Lifetime=0;Include Error Detail=true;' "$pg_pass" "$data" "$1"
+  }
+
+  set_env RICK_EDGE_HOST "$edge"
+  set_env RICK_APP_HOST "$app"
+  set_env RICK_DATA_HOST "$data"
+  set_env RICK_INFRA_HOST "$infra"
+  upsert_env RICK_ROUTER_IP "$router"
+  set_env RESGRID_WEB_HOST "$web"
+  set_env RESGRID_API_HOST "$api"
+  set_env RESGRID_EVENTS_HOST "$events"
+  set_env POSTGRES_PASSWORD "$pg_pass"
+  set_env REDIS_PASSWORD "$redis_pass"
+  set_env RABBITMQ_PASSWORD "$rabbit_pass"
+  set_env RUSTFS_ACCESS_KEY "$rust_access"
+  set_env RUSTFS_SECRET_KEY "$rust_secret"
+  set_env RESGRID__SystemBehaviorConfig__ResgridBaseUrl "https://$web"
+  set_env RESGRID__SystemBehaviorConfig__ResgridApiBaseUrl "https://$api"
+  set_env RESGRID__SystemBehaviorConfig__ResgridEventingBaseUrl "https://$events"
+  set_env RESGRID__SystemBehaviorConfig__ExternalLinkUrlParamPassphrase "$(rand_alnum 24)"
+  set_env RESGRID__SystemBehaviorConfig__ExternalAudioUrlParamPasshprase "$(rand_alnum 24)"
+  set_env RESGRID__SystemBehaviorConfig__ApiTokenEncryptionPassphrase "$(rand_alnum 24)"
+  set_env RESGRID__SystemBehaviorConfig__FullHealthCheckKey "$(rand_alnum 32)"
+  set_env RESGRID__SecurityConfig__EncryptionKey "$(rand_alnum 32)"
+  set_env RESGRID__SecurityConfig__EncryptionSaltValue "$(rand_alnum 24)"
+  set_env RESGRID__SecurityConfig__SystemApiKey "$system_api_key"
+  set_env RESGRID__SecurityConfig__DepartmentApiKeyPepper "$(rand_alnum 48)"
+  set_env RESGRID__ApiConfig__BackendInternalApikey "$(rand_alnum 48)"
+  set_env RESGRID__CacheConfig__RedisConnectionString "$infra:6379,password=$redis_pass,allowAdmin=True"
+  set_env RESGRID__DataConfig__ConnectionString "$(pg_conn resgrid)"
+  set_env RESGRID__DataConfig__CoreConnectionString "$(pg_conn resgrid)"
+  set_env RESGRID__DataConfig__DocumentConnectionString "$(pg_conn resgriddoc)"
+  set_env RESGRID__OidcConfig__ConnectionString "$(pg_conn resgridoidc)"
+  set_env RESGRID__WorkerConfig__WorkerDbConnectionString "$(pg_conn resgridworkers)"
+  set_env RESGRID__JwtConfig__EventsClientSecret "$(rand_alnum 48)"
+  set_env RESGRID__ServiceBusConfig__RabbitHostname "$infra"
+  set_env RESGRID__ServiceBusConfig__RabbbitPassword "$rabbit_pass"
+  set_env RESGRID__WorkerConfig__PayloadKey "$(rand_alnum 96)"
+  set_env RESGRID__WebConfig__IngressProxyNetwork "$lan"
+  set_env RESGRID__WebConfig__IngressProxyNetworkCidr 24
+  set_env RESGRID__MappingConfig__LeafletTileUrl "https://$web/tiles/{z}/{x}/{y}.png"
+  set_env RESGRID__TtsConfig__ServiceBaseUrl "http://$app:5154"
+  set_env RESGRID__TtsConfig__PlaybackBaseUrl "https://$api"
+  set_env RESGRID__TtsConfig__StaticPromptAdminKey "$(rand_alnum 32)"
+  for section in TtsConfig ImportConfig; do
+    set_env "RESGRID__${section}__S3Endpoint" "http://$infra:9000"
+    set_env "RESGRID__${section}__S3AccessKey" "$rust_access"
+    set_env "RESGRID__${section}__S3SecretKey" "$rust_secret"
+  done
+  set_env RESGRID__AttachmentScanningConfig__Host "$infra"
+  set_env RESGRID__UnitTrackingConfig__CredentialPepper "$(rand_alnum 48)"
+  set_env RESGRID__RELAY__Resgrid__SystemApiKey "$system_api_key"
+  set_env RESGRID__RELAY__Resgrid__ClientSecret "$(rand_alnum 32)"
+  set_env RESGRID__RELAY__Smtp__DepartmentAddressDomains__0 "dispatch.$web"
+  set_env RESGRID__OidcConfig__EncryptionCert "$(oidc_cert Encryption keyEncipherment)"
+  set_env RESGRID__OidcConfig__SigningCert "$(oidc_cert Signing digitalSignature)"
+
+  make_ca
+  if [ -n "${RESGRID_TLS_CERT_FILE:-}" ] || [ -n "${RESGRID_TLS_KEY_FILE:-}" ]; then
+    [ -f "${RESGRID_TLS_CERT_FILE:-}" ] && [ -f "${RESGRID_TLS_KEY_FILE:-}" ] || die "Set both RESGRID_TLS_CERT_FILE and RESGRID_TLS_KEY_FILE to readable PEM files."
+    cp "$RESGRID_TLS_CERT_FILE" certs/site/fullchain.pem
+    cp "$RESGRID_TLS_KEY_FILE" certs/site/privkey.pem
+    chmod 644 certs/site/fullchain.pem certs/site/privkey.pem
+    set_env RESGRID_TLS "/certs/site/fullchain.pem /certs/site/privkey.pem"
+  fi
+  write_dns
+  date > .setup-complete
+}
+
+# ------------------------------------------ configuration: existing install ---
+
+# Kits configured before October 2026 had three nodes (web, infra, database)
+# and NGINX_* hostnames. Map them onto the four roles: the old web node runs
+# edge and app, so every address in .env stays valid.
+migrate_legacy_env() {
+  has_env RICK_EDGE_HOST && return 0
+  has_env RICK_WEB_HOST || die ".env has no RICK_EDGE_HOST or RICK_WEB_HOST. Is this a RICK .env?"
+  local web infra data
+  web="$(get_env RICK_WEB_HOST)"; infra="$(get_env RICK_INFRA_HOST)"; data="$(get_env RICK_DATABASE_HOST)"
+  info "Converting the three-node kit settings: edge and app on $web, data on $data, infra on $infra"
+  {
+    printf '\n# Four-role layout (converted from the three-node kit by setup.sh)\n'
+    printf 'RICK_EDGE_HOST=%s\nRICK_APP_HOST=%s\nRICK_DATA_HOST=%s\n' "$web" "$web" "$data"
+    has_env RESGRID_WEB_HOST || printf 'RESGRID_WEB_HOST=%s\nRESGRID_API_HOST=%s\nRESGRID_EVENTS_HOST=%s\n' \
+      "$(get_env NGINX_RESGRID_WEB_URL)" "$(get_env NGINX_RESGRID_API_URL)" "$(get_env NGINX_RESGRID_EVENTS_URL)"
+  } >> .env
+  # Services that moved between nodes or onto published ports.
+  if has_env RESGRID__TtsConfig__ServiceBaseUrl; then set_env RESGRID__TtsConfig__ServiceBaseUrl "http://$web:5154"; fi
+  local key
+  for key in RESGRID__TtsConfig__S3Endpoint RESGRID__ImportConfig__S3Endpoint; do
+    has_env "$key" && set_env "$key" "http://$infra:9000"
+  done
+  if has_env ASPNETCORE_URLS; then set_env ASPNETCORE_URLS "http://+:8080"; fi
+  if [ "$(get_env RESGRID__ApiConfig__BypassSslChecks)" = "true" ]; then set_env RESGRID__ApiConfig__BypassSslChecks false; fi
+}
+
+# Bring .env up to date. Never replaces a value you set, never rotates a
+# secret your data depends on; only fills in settings that are missing or
+# empty and fixes values known to break.
+reconcile_env() {
+  local backup line key value added=0 edge app data infra
+  backup=".env.backup-$(date +%Y%m%d-%H%M%S)"
+  cp .env "$backup"; chmod 600 "$backup"
+  info "Checking the kit configuration (backup: $backup)"
+  migrate_legacy_env
+  edge="$(get_env RICK_EDGE_HOST)"; app="$(get_env RICK_APP_HOST)"
+  data="$(get_env RICK_DATA_HOST)"; infra="$(get_env RICK_INFRA_HOST)"
+
+  # Settings introduced since the kit was configured. The template's example
+  # node addresses become this kit's; new secrets get a random value. The
+  # department API key pepper stays empty on existing kits: empty means
+  # "derived from the encryption key", which existing department API keys use.
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    key="${line%%=*}"
+    has_env "$key" && continue
+    value="${line#*=}"
+    value="${value//192.168.50.11/$edge}"; value="${value//192.168.50.12/$app}"
+    value="${value//192.168.50.13/$data}"; value="${value//192.168.50.14/$infra}"
+    case "$key" in
+      RESGRID__ApiConfig__BackendInternalApikey) value="$(rand_alnum 48)" ;;
+      RESGRID__SystemBehaviorConfig__FullHealthCheckKey) value="$(rand_alnum 32)" ;;
+      RESGRID__SecurityConfig__DepartmentApiKeyPepper) value="" ;;
+      RESGRID__*Config__S3AccessKey) [ "${key#*Search}" = "$key" ] && value="$(get_env RUSTFS_ACCESS_KEY)" || value="" ;;
+      RESGRID__*Config__S3SecretKey) [ "${key#*Search}" = "$key" ] && value="$(get_env RUSTFS_SECRET_KEY)" || value="" ;;
+      RICK_ROUTER_IP) value="${edge%.*}.1" ;;
+    esac
+    [ "$added" -eq 0 ] && printf '\n# Added by setup.sh on %s\n' "$(date +%F)" >> .env
+    printf '%s=%s\n' "$key" "$value" >> .env
+    info "Added $key"
+    added=$((added + 1))
+  done < .env.example
+
+  # Required values that are empty can be generated safely.
+  [ -n "$(get_env RESGRID__ApiConfig__BackendInternalApikey)" ] || set_env RESGRID__ApiConfig__BackendInternalApikey "$(rand_alnum 48)"
+  [ -n "$(get_env RESGRID__SecurityConfig__SystemApiKey)" ] || set_env RESGRID__SecurityConfig__SystemApiKey "$(rand_alnum 48)"
+  [ -n "$(get_env RESGRID__RELAY__Resgrid__SystemApiKey)" ] || set_env RESGRID__RELAY__Resgrid__SystemApiKey "$(get_env RESGRID__SecurityConfig__SystemApiKey)"
+  # Events tokens are short-lived, so a placeholder secret can be replaced.
+  if is_placeholder "$(get_env RESGRID__JwtConfig__EventsClientSecret)" || [ "$(get_env RESGRID__JwtConfig__EventsClientSecret)" = "SecretKeyChangeMe1234!" ]; then
+    set_env RESGRID__JwtConfig__EventsClientSecret "$(rand_alnum 48)"
+  fi
+  if [ -z "$(get_env RESGRID__OidcConfig__EncryptionCert)" ] || [ -z "$(get_env RESGRID__OidcConfig__SigningCert)" ]; then
+    info "Creating the missing OpenID Connect certificates"
+    set_env RESGRID__OidcConfig__EncryptionCert "$(oidc_cert Encryption keyEncipherment)"
+    set_env RESGRID__OidcConfig__SigningCert "$(oidc_cert Signing digitalSignature)"
+  fi
+
+  # Placeholders that can't be changed without losing access to existing data.
+  for key in POSTGRES_PASSWORD REDIS_PASSWORD RABBITMQ_PASSWORD RESGRID__SecurityConfig__EncryptionKey \
+             RESGRID__SecurityConfig__EncryptionSaltValue RESGRID__WorkerConfig__PayloadKey; do
+    if is_placeholder "$(get_env "$key")"; then
+      warn "$key still has the public template value. Change it (and everything that depends on it) by hand, or reconfigure the kit."
+    fi
+  done
+  chmod 600 .env
+  make_ca
+  write_dns
+  date >> .setup-complete
+}
+
+# ================================================================= main ===
+
+need_cmd openssl "Install openssl (sudo apt install openssl)."
+[ -f .env.example ] || die "Run setup.sh from a checkout of the rick branch."
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) die "Use Linux, macOS or WSL2 (not Git Bash)." ;; esac
+
+if [ -f .env ]; then
+  info "Existing kit configuration found: upgrading and repairing it (settings, secrets and data are kept)."
+  reconcile_env
+  FIRST_RUN=0
+else
+  configure_new
+  FIRST_RUN=1
+fi
+
+rollout="${RICK_ROLLOUT:-}"
+if [ -z "$rollout" ]; then
+  if ! kit_node; then
+    rollout=0
+  elif [ "$FIRST_RUN" = 1 ]; then
+    case "$(prompt 'Copy the configuration to every node and start the kit now (needs SSH to the other nodes)? (y/n)' n)" in
+      y|Y|yes|Yes) rollout=1 ;; *) rollout=0 ;;
+    esac
+  else
+    rollout=1
+  fi
+fi
+if [ "$rollout" = 1 ]; then
+  exec ./rick.sh rollout
+fi
+
+WEB_HOST="$(get_env RESGRID_WEB_HOST)"; API_HOST="$(get_env RESGRID_API_HOST)"; EVENTS_HOST="$(get_env RESGRID_EVENTS_HOST)"
+EDGE="$(get_env RICK_EDGE_HOST)"
+if [ "$FIRST_RUN" = 1 ]; then
+  cat <<EOF
+
+Kit configured. Next steps (README.md has the details):
+
+  1. On the hotspot router, add DNS records pointing at $EDGE:
+         $WEB_HOST  $API_HOST  $EVENTS_HOST
+     (or run the kit's own DNS: on rick1 ./rick.sh start --profile dns, and set
+      the router's DHCP DNS server to $EDGE)
+  2. From rick1 (SSH access to the other nodes):   ./rick.sh rollout
+     It copies this checkout (including .env and certs/) to the same path on
+     every node, starts rick3 (data), rick4 (infra), rick2 (app) and rick1
+     (edge) in that order, and walks you through the optional features.
+     Without SSH: copy the checkout to each node yourself and run
+     ./rick.sh start on each, in that order, then ./rick.sh features.
+  3. Trust certs/ca/resgrid-root-ca.crt on laptops and iPhones, or install a
+     publicly trusted certificate for Android phones (./rick.sh cert).
+
+Keep .env and certs/private/ secret, and keep an offline backup of both.
+EOF
+else
+  cat <<EOF
+
+Configuration updated. Roll it out from rick1:   ./rick.sh rollout
+(copies it to every node, pulls new images when online, restarts the kit and
+offers the new optional features).
+EOF
+fi

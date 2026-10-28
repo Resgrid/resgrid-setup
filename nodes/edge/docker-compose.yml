@@ -1,0 +1,101 @@
+# RICK node 1 (edge): Caddy, web app, events hub.
+# Every client (browsers, Responder/Unit apps) connects here on 443.
+# Host networking: Caddy reaches web/events on 127.0.0.1 (always trusted for
+# forwarded headers) and the app/infra nodes on the kit LAN.
+# Manage with ./rick.sh on this node.
+name: rick-edge
+
+x-resgrid-app: &resgrid-app
+  env_file: [../../.env]
+  restart: unless-stopped
+  network_mode: host
+  extra_hosts:
+    - "${RESGRID_WEB_HOST}:${RICK_EDGE_HOST}"
+    - "${RESGRID_API_HOST}:${RICK_EDGE_HOST}"
+    - "${RESGRID_EVENTS_HOST}:${RICK_EDGE_HOST}"
+  volumes:
+    - ../../certs/ca:/usr/local/share/resgrid-ca:ro
+  # Local copy of the search index (feature "search"), owned by the
+  # images' non-root user.
+  tmpfs:
+    - /data/search:uid=65532,gid=65532,mode=0700
+
+services:
+  web:
+    <<: *resgrid-app
+    image: "${RESGRID_IMAGE_REPO:-resgridllc}/resgridwebcore:${RESGRID_IMAGE_TAG:-latest}"
+    environment:
+      ASPNETCORE_URLS: "http://127.0.0.1:5151"
+      # Wait for the database, cache and bus on the other nodes; after a power
+      # cycle the container simply retries until they are up.
+      WAIT_HOSTS: "${RICK_DATA_HOST}:5432,${RICK_INFRA_HOST}:6379,${RICK_INFRA_HOST}:5672,${RICK_APP_HOST}:5152"
+      WAIT_TIMEOUT: "600"
+
+  events:
+    <<: *resgrid-app
+    image: "${RESGRID_IMAGE_REPO:-resgridllc}/resgridwebevents:${RESGRID_IMAGE_TAG:-latest}"
+    environment:
+      ASPNETCORE_URLS: "http://127.0.0.1:5153"
+      WAIT_HOSTS: "${RICK_DATA_HOST}:5432,${RICK_INFRA_HOST}:6379,${RICK_INFRA_HOST}:5672"
+      WAIT_TIMEOUT: "600"
+
+  caddy-init:
+    # One-shot: copies the local CA private key into Caddy's volume, readable
+    # only by Caddy's non-root user.
+    image: "rclone/rclone:1"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ -f /certs/private/resgrid-root-ca.key ]; then
+          cp /certs/private/resgrid-root-ca.key /caddy-ca/resgrid-root-ca.key
+          chown 65532:65532 /caddy-ca/resgrid-root-ca.key
+          chmod 600 /caddy-ca/resgrid-root-ca.key
+        fi
+    volumes:
+      - ../../certs:/certs:ro
+      - caddy-ca:/caddy-ca
+    network_mode: none
+
+  caddy:
+    image: "dhi.io/caddy:2.11.3-debian13"
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      RESGRID_WEB_HOST: ${RESGRID_WEB_HOST}
+      RESGRID_API_HOST: ${RESGRID_API_HOST}
+      RESGRID_EVENTS_HOST: ${RESGRID_EVENTS_HOST}
+      RESGRID_TLS: ${RESGRID_TLS}
+      RESGRID_HTTP_PORT: ${RESGRID_HTTP_PORT:-80}
+      RESGRID_HTTPS_PORT: ${RESGRID_HTTPS_PORT:-443}
+      RICK_APP_HOST: ${RICK_APP_HOST}
+      RICK_INFRA_HOST: ${RICK_INFRA_HOST}
+    volumes:
+      - ../../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../../certs/ca:/certs/ca:ro
+      - ../../certs/site:/certs/site:ro
+      - caddy-ca:/certs/private:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      caddy-init:
+        condition: service_completed_successfully
+
+  dns:
+    # Optional DNS server for the kit (profile "dns"), for hotspot routers that
+    # can't add custom DNS records. Point the router's DHCP DNS option at this
+    # node. Answers the three Resgrid hostnames; everything else gets NXDOMAIN
+    # while the kit is offline.
+    profiles: ["dns"]
+    image: "dockurr/dnsmasq:latest"
+    restart: unless-stopped
+    network_mode: host
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ../../dns/dnsmasq.conf:/etc/dnsmasq.conf:ro
+
+volumes:
+  caddy-ca:
+  caddy-data:
+  caddy-config:

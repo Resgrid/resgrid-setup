@@ -1,0 +1,38 @@
+# RICK node 3 (data): PostgreSQL. Keep this node on its NVMe SSD.
+# Manage with ./rick.sh on this node.
+name: rick-data
+
+services:
+  db:
+    image: "dhi.io/postgres:18-alpine3.22"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${RICK_DATA_HOST}:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}", "-d", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  db-init:
+    # One-shot: creates the four Resgrid databases if they don't exist.
+    image: "dhi.io/postgres:18-alpine3.22"
+    restart: "no"
+    entrypoint: ["sh", "/scripts/create-databases.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ../../db/create-databases.sh:/scripts/create-databases.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
