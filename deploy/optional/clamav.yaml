@@ -1,0 +1,73 @@
+# Optional virus scanning of uploaded files (feature "scanning").
+# Managed by setup.sh: `./setup.sh features` and answer y to "Attachment
+# virus scanning" (adds clamav to RESGRID_OPTIONAL, sets
+# RESGRID__AttachmentScanningConfig__Enabled=true and applies this file).
+# Ships with virus signatures and updates them while the cluster is online.
+apiVersion: v1
+kind: Service
+metadata:
+  name: clamav
+  namespace: resgrid
+spec:
+  selector:
+    app: clamav
+  ports:
+    - name: clamd
+      port: 3310
+      targetPort: clamd
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clamav-db
+  namespace: resgrid
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clamav
+  namespace: resgrid
+  labels:
+    app: clamav
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: clamav
+  template:
+    metadata:
+      labels:
+        app: clamav
+    spec:
+      initContainers:
+        # A new volume hides the signatures in the image: copy them in once,
+        # so scanning works without internet access.
+        - name: seed-signatures
+          image: clamav/clamav-debian:stable
+          command: ["sh", "-c", "ls /db/*.cvd /db/*.cld >/dev/null 2>&1 || cp -a /var/lib/clamav/. /db/"]
+          volumeMounts:
+            - {name: db, mountPath: /db}
+      containers:
+        - name: clamav
+          image: clamav/clamav-debian:stable
+          ports:
+            - {name: clamd, containerPort: 3310}
+          readinessProbe:
+            tcpSocket: {port: clamd}
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 100m, memory: 1536Mi}
+            limits: {memory: 3Gi}
+          volumeMounts:
+            - {name: db, mountPath: /var/lib/clamav}
+      volumes:
+        - name: db
+          persistentVolumeClaim: {claimName: clamav-db}

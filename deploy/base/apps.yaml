@@ -1,3 +1,9 @@
+# Resgrid application services. All images run as a non-root user and listen
+# on 8080. Every pod mounts the public certificate of the Resgrid local CA
+# (ConfigMap resgrid-ca) and trusts it through SSL_CERT_DIR in resgrid-env, so
+# server-side calls to the public HTTPS URLs work with a private certificate.
+# Pods labelled resgrid.io/tier=app also receive the generated patches in
+# deploy/kustomization.yaml (host aliases, node selector).
 apiVersion: v1
 kind: Service
 metadata:
@@ -7,13 +13,15 @@ spec:
     app: web
   ports:
     - name: http
-      port: 80
-      targetPort: 80
+      port: 8080
+      targetPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: web
+  labels:
+    resgrid.io/tier: app
 spec:
   replicas: 1
   selector:
@@ -24,23 +32,34 @@ spec:
       labels:
         app: web
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
       containers:
         - name: web
           image: resgridllc/resgridwebcore:latest
           imagePullPolicy: Always
           envFrom:
-            - secretRef:
-                name: resgrid-env
+            - secretRef: {name: resgrid-env}
           env:
-            - name: WAIT_HOSTS
-              value: postgres:5432,redis:6379,rabbitmq:5672,api:80
-            - name: WAIT_TIMEOUT
-              value: "300"
+            - {name: WAIT_HOSTS, value: "db:5432,redis:6379,rabbitmq:5672"}
+            - {name: WAIT_TIMEOUT, value: "600"}
           ports:
-            - name: http
-              containerPort: 80
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /Health/GetCurrent, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 10
+          resources:
+            requests: {cpu: 250m, memory: 384Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: resgrid-ca, mountPath: /usr/local/share/resgrid-ca, readOnly: true}
+            # Scratch space of the search index (the index itself lives in RustFS).
+            - {name: search, mountPath: /data/search}
+      volumes:
+        - name: resgrid-ca
+          configMap: {name: resgrid-ca}
+        - name: search
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -51,13 +70,15 @@ spec:
     app: api
   ports:
     - name: http
-      port: 80
-      targetPort: 80
+      port: 8080
+      targetPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: api
+  labels:
+    resgrid.io/tier: app
 spec:
   replicas: 1
   selector:
@@ -68,23 +89,38 @@ spec:
       labels:
         app: api
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
       containers:
         - name: api
           image: resgridllc/resgridwebservices:latest
           imagePullPolicy: Always
           envFrom:
-            - secretRef:
-                name: resgrid-env
+            - secretRef: {name: resgrid-env}
           env:
-            - name: WAIT_HOSTS
-              value: postgres:5432,redis:6379,rabbitmq:5672,events:80
-            - name: WAIT_TIMEOUT
-              value: "300"
+            - {name: WAIT_HOSTS, value: "db:5432,redis:6379,rabbitmq:5672"}
+            - {name: WAIT_TIMEOUT, value: "600"}
           ports:
-            - name: http
-              containerPort: 80
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+          resources:
+            requests: {cpu: 250m, memory: 384Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: resgrid-ca, mountPath: /usr/local/share/resgrid-ca, readOnly: true}
+            # Scratch space of the search index (the index itself lives in RustFS).
+            - {name: search, mountPath: /data/search}
+      volumes:
+        - name: resgrid-ca
+          configMap: {name: resgrid-ca}
+        - name: search
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -95,14 +131,18 @@ spec:
     app: events
   ports:
     - name: http
-      port: 80
-      targetPort: 80
+      port: 8080
+      targetPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: events
+  labels:
+    resgrid.io/tier: app
 spec:
+  # SignalR uses the Redis backplane, but clients negotiate and then connect
+  # in two requests. Keep one replica unless the ingress has sticky sessions.
   replicas: 1
   selector:
     matchLabels:
@@ -112,32 +152,45 @@ spec:
       labels:
         app: events
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
       containers:
         - name: events
           image: resgridllc/resgridwebevents:latest
           imagePullPolicy: Always
           envFrom:
-            - secretRef:
-                name: resgrid-env
+            - secretRef: {name: resgrid-env}
           env:
-            - name: WAIT_HOSTS
-              value: postgres:5432,redis:6379,rabbitmq:5672
-            - name: WAIT_AFTER
-              value: "120"
-            - name: WAIT_TIMEOUT
-              value: "300"
+            - {name: WAIT_HOSTS, value: "db:5432,redis:6379,rabbitmq:5672"}
+            - {name: WAIT_TIMEOUT, value: "600"}
           ports:
-            - name: http
-              containerPort: 80
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /health/GetCurrent, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 100m, memory: 192Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: resgrid-ca, mountPath: /usr/local/share/resgrid-ca, readOnly: true}
+            # Scratch space of the search index (the index itself lives in RustFS).
+            - {name: search, mountPath: /data/search}
+      volumes:
+        - name: resgrid-ca
+          configMap: {name: resgrid-ca}
+        - name: search
+          emptyDir: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: worker
+  labels:
+    resgrid.io/tier: app
 spec:
+  # Keep one worker: it runs the scheduled jobs and the schema migrations.
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: worker
@@ -146,22 +199,43 @@ spec:
       labels:
         app: worker
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
+      initContainers:
+        # Creates the four Resgrid databases (idempotent) before the worker
+        # creates/migrates their schema (RESGRID__DODBUPGRADE=true).
+        - name: create-databases
+          image: dhi.io/postgres:18-alpine3.22
+          command: ["sh", "/scripts/create-databases.sh"]
+          env:
+            - {name: PGHOST, value: db}
+            - name: PGUSER
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: POSTGRES_USER}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: POSTGRES_PASSWORD}}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts, readOnly: true}
       containers:
         - name: worker
           image: resgridllc/resgridworkersconsole:latest
           imagePullPolicy: Always
           envFrom:
-            - secretRef:
-                name: resgrid-env
+            - secretRef: {name: resgrid-env}
           env:
-            - name: WAIT_HOSTS
-              value: postgres:5432,redis:6379,rabbitmq:5672
-            - name: WAIT_AFTER
-              value: "90"
-            - name: WAIT_TIMEOUT
-              value: "300"
+            - {name: WAIT_HOSTS, value: "db:5432,redis:6379,rabbitmq:5672"}
+            - {name: WAIT_TIMEOUT, value: "600"}
+          resources:
+            requests: {cpu: 250m, memory: 384Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: resgrid-ca, mountPath: /usr/local/share/resgrid-ca, readOnly: true}
+            # Scratch space of the search index (the index itself lives in RustFS).
+            - {name: search, mountPath: /data/search}
+      volumes:
+        - name: resgrid-ca
+          configMap: {name: resgrid-ca}
+        - name: search
+          emptyDir: {}
+        - name: scripts
+          configMap: {name: resgrid-database-scripts}
 ---
 apiVersion: v1
 kind: Service
@@ -179,6 +253,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tts
+  labels:
+    resgrid.io/tier: app
 spec:
   replicas: 1
   selector:
@@ -189,25 +265,26 @@ spec:
       labels:
         app: tts
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
       containers:
         - name: tts
           image: resgridllc/resgridwebtts:latest
           imagePullPolicy: Always
           envFrom:
-            - secretRef:
-                name: resgrid-env
-          env:
-            - name: ASPNETCORE_URLS
-              value: http://+:8080
-            - name: WAIT_HOSTS
-              value: redis:6379,rustfs:9000
-            - name: WAIT_TIMEOUT
-              value: "300"
+            - secretRef: {name: resgrid-env}
           ports:
-            - name: http
-              containerPort: 8080
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: resgrid-ca, mountPath: /usr/local/share/resgrid-ca, readOnly: true}
+      volumes:
+        - name: resgrid-ca
+          configMap: {name: resgrid-ca}
 ---
 apiVersion: v1
 kind: Service
@@ -225,7 +302,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mcp
+  labels:
+    resgrid.io/tier: app
 spec:
+  # The MCP HTTP endpoint is unauthenticated (users log in inside the
+  # protocol). It has no Ingress rule; expose it only inside your network.
   replicas: 1
   selector:
     matchLabels:
@@ -235,20 +316,25 @@ spec:
       labels:
         app: mcp
     spec:
-      nodeSelector:
-        kubernetes.io/arch: amd64
       containers:
         - name: mcp
           image: resgridllc/resgridwebmcp:latest
           imagePullPolicy: Always
           envFrom:
-            - secretRef:
-                name: resgrid-env
+            - secretRef: {name: resgrid-env}
           env:
-            - name: WAIT_HOSTS
-              value: api:80
-            - name: WAIT_TIMEOUT
-              value: "300"
+            - {name: WAIT_HOSTS, value: "api:8080"}
+            - {name: WAIT_TIMEOUT, value: "600"}
           ports:
-            - name: http
-              containerPort: 8080
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            tcpSocket: {port: http}
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: resgrid-ca, mountPath: /usr/local/share/resgrid-ca, readOnly: true}
+      volumes:
+        - name: resgrid-ca
+          configMap: {name: resgrid-ca}

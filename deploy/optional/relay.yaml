@@ -1,3 +1,8 @@
+# Optional inbound-email dispatch relay. Set RESGRID__RELAY__Resgrid__DepartmentId
+# and the dispatch domain in deploy/generated/resgrid.env, add relay to
+# RESGRID_OPTIONAL there (RESGRID_OPTIONAL=relay, comma separated), then run
+# ./setup.sh: it applies this file on every run from then on.
+# The relay accepts unauthenticated SMTP: firewall port 25.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -16,6 +21,8 @@ metadata:
   namespace: resgrid
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: relay
@@ -24,30 +31,34 @@ spec:
       labels:
         app: relay
     spec:
+      # Published Resgrid images are amd64-only today.
       nodeSelector:
         kubernetes.io/arch: amd64
+      securityContext:
+        fsGroup: 65532
       containers:
         - name: relay
           image: resgridllc/resgridrelay:latest
           imagePullPolicy: Always
           envFrom:
-            - secretRef:
-                name: resgrid-env
+            - secretRef: {name: resgrid-env}
           env:
-            - name: WAIT_HOSTS
-              value: api:80
-            - name: WAIT_TIMEOUT
-              value: "300"
+            - {name: WAIT_HOSTS, value: "api:8080"}
+            - {name: WAIT_TIMEOUT, value: "600"}
           ports:
-            - name: smtp
-              containerPort: 2525
+            - {name: smtp, containerPort: 2525}
+          readinessProbe:
+            tcpSocket: {port: smtp}
+            periodSeconds: 15
           volumeMounts:
-            - name: data
-              mountPath: /app/publish/data
+            - {name: data, mountPath: /app/publish/data}
+            - {name: resgrid-ca, mountPath: /usr/local/share/resgrid-ca, readOnly: true}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: relay-data
+        - name: resgrid-ca
+          configMap: {name: resgrid-ca}
 ---
 apiVersion: v1
 kind: Service

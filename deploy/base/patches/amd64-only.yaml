@@ -1,0 +1,6 @@
+# The published Resgrid images are linux/amd64 only today. Remove this patch
+# from kustomization.yaml once multi-architecture images are published.
+- op: add
+  path: /spec/template/spec/nodeSelector
+  value:
+    kubernetes.io/arch: amd64

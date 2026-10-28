@@ -1,3 +1,5 @@
+# Routes the three Resgrid hostnames. Hosts and the IngressClass are filled
+# in from deploy/generated/hosts.env (see kustomization.yaml).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -17,34 +19,23 @@ spec:
           - path: /
             pathType: Prefix
             backend:
-              service:
-                name: web
-                port:
-                  number: 80
+              service: {name: web, port: {number: 8080}}
     - host: rgapi.mylocal
       http:
         paths:
+          # Dispatch audio playback (fetched by Twilio) is served by TTS.
           - path: /tts/audio
             pathType: Prefix
             backend:
-              service:
-                name: tts
-                port:
-                  number: 8080
+              service: {name: tts, port: {number: 8080}}
           - path: /
             pathType: Prefix
             backend:
-              service:
-                name: api
-                port:
-                  number: 80
+              service: {name: api, port: {number: 8080}}
     - host: rgevents.mylocal
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
-              service:
-                name: events
-                port:
-                  number: 80
+              service: {name: events, port: {number: 8080}}

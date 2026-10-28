@@ -1,3 +1,6 @@
+# Optional GPS tracker gateway. Enable RESGRID__UnitTrackingConfig__* in
+# deploy/generated/resgrid.env, add tracking to RESGRID_OPTIONAL there
+# (comma separated), then run ./setup.sh: it applies this file on every run.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,6 +16,7 @@ spec:
       labels:
         app: tracker-gateway
     spec:
+      # Published Resgrid images are amd64-only today.
       nodeSelector:
         kubernetes.io/arch: amd64
       containers:
@@ -20,13 +24,10 @@ spec:
           image: resgridllc/resgridtrackergateway:latest
           imagePullPolicy: Always
           envFrom:
-            - secretRef:
-                name: resgrid-env
+            - secretRef: {name: resgrid-env}
           env:
-            - name: WAIT_HOSTS
-              value: postgres:5432,redis:6379,rabbitmq:5672
-            - name: WAIT_TIMEOUT
-              value: "300"
+            - {name: WAIT_HOSTS, value: "db:5432,redis:6379,rabbitmq:5672"}
+            - {name: WAIT_TIMEOUT, value: "600"}
           ports:
             - {name: queclink-tcp, containerPort: 5004, protocol: TCP}
             - {name: queclink-udp, containerPort: 5004, protocol: UDP}
@@ -34,6 +35,16 @@ spec:
             - {name: gt06-udp, containerPort: 5023, protocol: UDP}
             - {name: teltonika-tcp, containerPort: 5027, protocol: TCP}
             - {name: teltonika-udp, containerPort: 5027, protocol: UDP}
+            - {name: health, containerPort: 8080, protocol: TCP}
+          readinessProbe:
+            httpGet: {path: /health/ready, port: health}
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          volumeMounts:
+            - {name: resgrid-ca, mountPath: /usr/local/share/resgrid-ca, readOnly: true}
+      volumes:
+        - name: resgrid-ca
+          configMap: {name: resgrid-ca}
 ---
 apiVersion: v1
 kind: Service

@@ -1,166 +1,229 @@
-# Resgrid on Kubernetes and k3s
+# Resgrid on Kubernetes / k3s (multi-server)
 
-This branch deploys the current Resgrid Core stack to Kubernetes with Kustomize, using the `kubectl apply -k` support already built into kubectl. It works with k3s defaults and can be adapted to standard Kubernetes distributions without installing Helm.
+This branch deploys Resgrid to a Kubernetes cluster spread over several servers: a production-grade layout where the stateless Resgrid services can run several replicas, nodes can be drained for maintenance, and the stateful services keep their data on persistent volumes. It uses only `kubectl` (built-in Kustomize), so it works on [k3s](https://k3s.io) out of the box and on any conformant cluster (kubeadm, RKE2, AKS, EKS, GKE, …).
 
-The base includes:
+For one server use the [`master`](https://github.com/Resgrid/resgrid-setup/tree/master) branch. Guide with diagrams: <https://docs.resgrid.com/self-hosted/multi>.
 
-- Web, API, events, worker/database migrations, TTS, and MCP Deployments.
-- PostgreSQL, Redis, RabbitMQ, and RustFS StatefulSets with persistent volume claims.
-- An idempotent RustFS bucket initialization Job.
-- A standard `networking.k8s.io/v1` Ingress for web, API/TTS playback, and events.
-- Optional tracker-gateway and email-relay manifests.
+```
+              Internet / LAN clients (browsers, Responder + Unit apps)
+                                  │ HTTPS 443
+                     ┌────────────▼────────────┐
+                     │ Ingress (Traefik/nginx)  │  rg.* rgapi.* rgevents.*
+                     └──┬─────────┬─────────┬───┘
+                 web ×N │  api ×N │  events │  (/tts/audio → tts)
+                        ▼         ▼         ▼
+              worker ×1 (migrations, jobs)   tts   mcp (cluster-internal)
+                        │
+     ┌──────────────────┼─────────────────────┬──────────────┐
+     ▼                  ▼                     ▼              ▼
+  db (PostgreSQL)     redis               rabbitmq        rustfs (S3)
+  StatefulSet + PVC   StatefulSet + PVC   StatefulSet+PVC StatefulSet + PVC
+```
 
-This is an easy starting topology, not a complete HA production design. Each stateful dependency has one replica. Production operators should use managed or properly clustered data services, define resource requests/limits and disruption budgets, pin images by digest, and implement tested backup/restore procedures.
+## What gets deployed
+
+Namespace `resgrid`:
+
+| Kind | Name | Notes |
+|---|---|---|
+| Deployment | `web`, `api` | Stateless; scale with `kubectl scale`. Data-protection keys and the SignalR backplane are in Redis. |
+| Deployment | `events` | Keep 1 replica unless your ingress has sticky sessions (SignalR negotiates and connects in two requests). |
+| Deployment | `worker` | Exactly 1. Its init container creates the four databases; the worker then creates/migrates the schema (`RESGRID__DODBUPGRADE=true`) and runs scheduled jobs. |
+| Deployment | `tts`, `mcp` | Text-to-speech; MCP for AI assistants (no Ingress: the endpoint is unauthenticated). |
+| StatefulSet | `db`, `redis`, `rabbitmq`, `rustfs` | One replica each, `ReadWriteOnce` PVCs (20, 2, 5, 20 GiB). |
+| Job | `rustfs-init` | Creates the `resgrid-tts` and `resgrid-imports` buckets. |
+| Ingress | `resgrid` | Web, API (+ `/tts/audio`) and events hostnames, TLS from Secret `resgrid-ingress-tls`. |
+| Secret | `resgrid-env` | Every setting and secret (generated `deploy/generated/resgrid.env`). |
+| ConfigMap | `resgrid-ca` | Public certificate of the Resgrid local CA, trusted by every Resgrid pod. |
+
+Optional ([Optional services](#optional-services)): [`deploy/optional/clamav.yaml`](deploy/optional/clamav.yaml) (virus scanning of uploads), [`deploy/optional/tracking.yaml`](deploy/optional/tracking.yaml) (GPS tracker gateway, LoadBalancer TCP/UDP 5004/5023/5027) and [`deploy/optional/relay.yaml`](deploy/optional/relay.yaml) (inbound email, SMTP 25).
+
+Every Resgrid pod has readiness probes (HTTP from the kubelet; the images contain no shell), resource requests/limits, runs as non-root and listens on 8080.
 
 ## Requirements
 
-- Kubernetes 1.27+ or a current k3s release.
-- A default `ReadWriteOnce` StorageClass. k3s supplies `local-path` by default.
-- An IngressClass. k3s supplies `traefik`; set another class during setup for nginx, HAProxy, or cloud ingress.
-- `kubectl`, OpenSSL, and a current kubeconfig context.
-- DNS records for three hostnames pointing at the ingress address.
-- Registry credentials if your environment requires authentication to pull `dhi.io` images.
+- Kubernetes 1.27+ or k3s, with **at least one `linux/amd64` node** (the published Resgrid images are amd64-only today; see [Architecture](#architecture)).
+- A default `ReadWriteOnce` StorageClass (k3s: `local-path`) and an IngressClass (k3s: `traefik`).
+- `kubectl` with a context for the cluster, `openssl`, `bash` (Linux, macOS or WSL).
+- DNS records for the three hostnames pointing at the ingress address (the k3s node IPs, or your load balancer).
+- Capacity: about 2 vCPU / 3 GB RAM requested by the base install; 3 nodes with 4 vCPU / 8 GB each is a sensible production start.
 
-### Application image architecture
+### Building a k3s cluster
 
-The current published Resgrid application images contain `linux/amd64` manifests only. The base pins application Deployments to nodes labeled `kubernetes.io/arch=amd64`; infrastructure StatefulSets can run on any architecture supported by their images. A mixed ARM64/AMD64 cluster is supported with at least one AMD64 worker, but a pure Raspberry Pi/ARM64 k3s cluster cannot run the application pods natively today. `setup.sh` checks for an AMD64 node before applying. Do not remove the selector unless you publish and validate native ARM64 Resgrid images or intentionally configure a supported emulation runtime.
+On the first server (use real hostnames/IPs):
 
-For k3s, verify the cluster before starting:
+```bash
+curl -sfL https://get.k3s.io | sh -s - server --cluster-init
+sudo cat /var/lib/rancher/k3s/server/node-token
+```
+
+On each additional server (3 servers give an HA control plane with embedded etcd):
+
+```bash
+curl -sfL https://get.k3s.io | K3S_URL=https://<first-server>:6443 K3S_TOKEN=<token> sh -s - server
+```
+
+Copy `/etc/rancher/k3s/k3s.yaml` to your workstation as `~/.kube/config` (replace `127.0.0.1` with the first server's address), then check:
 
 ```bash
 kubectl get nodes -o wide
-kubectl get ingressclass
-kubectl get storageclass
-kubectl config current-context
+kubectl get storageclass,ingressclass
 ```
 
-## Configure and install
+## Install
 
 ```bash
 git clone --branch multi https://github.com/Resgrid/resgrid-setup.git resgrid-k8s
 cd resgrid-k8s
-chmod +x setup.sh
 ./setup.sh
 ```
 
-The setup script:
+`setup.sh` asks for the three hostnames, the IngressClass and the pod CIDR, then:
 
-1. Asks for the web, API, and events hostnames, IngressClass, and pod CIDR.
-2. Generates unique infrastructure credentials, Resgrid encryption material, and OpenIddict certificates.
-3. Generates a self-signed ingress certificate, or uses PEM files supplied through `RESGRID_TLS_CERT_FILE` and `RESGRID_TLS_KEY_FILE`.
-4. Builds `deploy/generated/resgrid.env`, `hosts.env`, `tls.crt`, and `tls.key` (all ignored by Git).
-5. Shows the active kube context and requires confirmation before `kubectl apply -k deploy`.
+1. Writes `deploy/generated/resgrid.env` from `.env.example` with every password, key and the OpenID Connect certificates generated.
+2. Creates the Resgrid local CA (`deploy/generated/ca.crt`/`ca.key`) and issues the ingress certificate for the three hostnames from it, or uses your certificate (`RESGRID_TLS_CERT_FILE` / `RESGRID_TLS_KEY_FILE`).
+3. Finds the ingress controller's ClusterIP (Traefik or ingress-nginx) and writes `deploy/generated/host-aliases.yaml`, so pods reach the public hostnames through the ingress (the web app gets API tokens from the API's public URL; events and MCP call it too). Override with `RESGRID_INGRESS_IP`.
+4. Shows the current `kubectl` context, asks for confirmation (once per context), runs `kubectl apply -k deploy` and waits for the rollout.
+5. Walks you through the [optional features](#optional-features) (Records, Search, Chat, ...).
 
-Non-interactive example:
+Unattended:
 
 ```bash
-RESGRID_WEB_URL=dispatch.example.com \
-RESGRID_API_URL=dispatchapi.example.com \
-RESGRID_EVENTS_URL=dispatchevents.example.com \
-RESGRID_INGRESS_CLASS=nginx \
-RESGRID_POD_CIDR=10.244.0.0/16 \
+RESGRID_WEB_HOST=dispatch.example.com \
+RESGRID_API_HOST=dispatchapi.example.com \
+RESGRID_EVENTS_HOST=dispatchevents.example.com \
+RESGRID_INGRESS_CLASS=traefik \
+RESGRID_POD_CIDR=10.42.0.0/16 \
 RESGRID_TLS_CERT_FILE=/secure/fullchain.pem \
 RESGRID_TLS_KEY_FILE=/secure/privkey.pem \
+RESGRID_FEATURES=records,search \
 RESGRID_APPLY=1 \
 ./setup.sh
 ```
 
-Generate and validate without changing a cluster:
+`RESGRID_NO_APPLY=1 ./setup.sh` only generates the files; review them with `kubectl kustomize deploy`.
 
-```bash
-RESGRID_NO_APPLY=1 ./setup.sh
-kubectl kustomize deploy >/dev/null
-```
+The pod CIDR is the network the ingress controller connects to the pods from; Resgrid only trusts forwarded headers from it. k3s uses `10.42.0.0/16`; check your CNI otherwise.
 
-The generated `resgrid-env` Secret contains every application environment variable, including database connection strings and OIDC private keys. Back up `deploy/generated/resgrid.env` securely; do not commit it.
-
-## First start
+The first rollout takes 5–15 minutes while the worker creates the schema:
 
 ```bash
 kubectl -n resgrid get pods -w
 kubectl -n resgrid logs -f deployment/worker
-kubectl -n resgrid get ingress
 ```
 
-PostgreSQL creates `resgrid`, `resgridoidc`, `resgridworkers`, and `resgriddoc`; the worker then runs Core schema migrations. Once migration activity settles, open the web hostname and use **Sign Up** to create the first account and department.
+Then open `https://<web hostname>` and choose **Sign Up** to create your account and department. Afterwards set `RESGRID__SystemBehaviorConfig__AllowSignupWithoutBilling=false` in `deploy/generated/resgrid.env` and run `./setup.sh` so nobody else can create departments.
 
-If setup generated a self-signed certificate, distribute and trust `deploy/generated/tls.crt` on client devices. The web client must trust the API and events endpoints as well as the web endpoint.
+### Optional features
 
-## Private registry credentials
-
-If `dhi.io` requires authentication in your environment, create a registry secret and attach it to the namespace's default ServiceAccount before the pods pull:
+Resgrid ships several modules behind feature flags that are off on a new server. Setup asks about each one after the first rollout; change them any time with:
 
 ```bash
-kubectl -n resgrid create secret docker-registry dhi-registry \
-  --docker-server=dhi.io \
-  --docker-username='YOUR_USER' \
-  --docker-password='YOUR_TOKEN'
-kubectl -n resgrid patch serviceaccount default \
-  -p '{"imagePullSecrets":[{"name":"dhi-registry"}]}'
+./setup.sh features         # walk through the optional features
+./setup.sh features --all   # also offer flags no feature in the catalog covers
 ```
 
-Use a robot/service credential where supported. Do not put registry passwords in the repository.
+One question covers everything a feature needs: **Records (RMS)** (13 flags), **Unified search** (index in the RustFS bucket `resgrid-search`; each Resgrid pod gets an `emptyDir` at `/data/search` for scratch space), **Chat**, **Run cards**, **Checklists**, **Deployments**, **Setup wizard and admin guidance**, **Department import and migration**, **Attachment virus scanning** (applies [`deploy/optional/clamav.yaml`](deploy/optional/clamav.yaml): a ClamAV Deployment with a 2 Gi PVC, about 1.5 GB of RAM) and **Text-message commands (Twilio)**. The paid Resgrid add-ons depend on Resgrid's hosted billing and aren't offered.
 
-## Optional tracker gateway
+Flags are switched for every department (SQL through `kubectl exec` into `db-0`) and the Redis flag cache is cleared; settings a feature needs are written to `resgrid.env`, re-applied as the `resgrid-env` Secret, and the deployments restarted. Without questions: `RESGRID_FEATURES=records,search ./setup.sh features` (or `all` / `none`; features not listed are switched off). Later runs of `./setup.sh` only ask about features that are new in that version and switch recorded features (`RESGRID_FEATURES`) fully back on when needed. The catalog is [`features/catalog.ini`](features/catalog.ini), shared by all branches: see [Maintaining the feature list](https://github.com/Resgrid/resgrid-setup#maintaining-the-feature-list).
 
-First configure the `RESGRID__UnitTrackingConfig__*` entries in `deploy/generated/resgrid.env`, then regenerate the Secret by applying the base again and create the optional workload:
+### Certificates
+
+- **Public/corporate certificate** (recommended for production): pass `RESGRID_TLS_CERT_FILE`/`RESGRID_TLS_KEY_FILE` (one certificate covering all three hostnames, full chain). To use cert-manager instead, let it manage the Secret `resgrid-ingress-tls` and remove that entry from `deploy/kustomization.yaml`.
+- **Local CA** (default): install `deploy/generated/ca.crt` as a trusted root on every client (the [master README](https://github.com/Resgrid/resgrid-setup#trusting-the-local-ca-resgrid_tlsinternal) has per-OS steps). The ingress certificate is valid 397 days; renew with `./setup.sh renew-cert`. Android Resgrid apps only trust public certificates.
+
+### Images and registries
+
+Pods pull `resgridllc/*:latest` (`imagePullPolicy: Always`) and hardened infrastructure images from `dhi.io`. Docker Hub rate-limits anonymous pulls and `dhi.io` may require a login; give the namespace pull credentials:
 
 ```bash
-kubectl apply -k deploy
-kubectl apply -f deploy/optional/tracking.yaml
-kubectl -n resgrid get service tracker-gateway
+kubectl -n resgrid create secret docker-registry regcred --docker-server=https://index.docker.io/v1/ --docker-username=<user> --docker-password=<token>
+kubectl -n resgrid create secret docker-registry dhi --docker-server=dhi.io --docker-username=<user> --docker-password=<token>
+kubectl -n resgrid patch serviceaccount default -p '{"imagePullSecrets":[{"name":"regcred"},{"name":"dhi"}]}'
 ```
 
-The `LoadBalancer` Service publishes Queclink, GT06, and Teltonika TCP/UDP ports. k3s ServiceLB usually advertises these on node addresses; cloud behavior depends on the provider. Restrict exposure with firewall/network policy controls.
+For production, pin versions instead of `latest`: add an `images:` block to `deploy/kustomization.yaml` (`newTag:` per image) so upgrades happen only when you change it.
 
-## Optional inbound-email relay
-
-Set the relay department and address-domain values in the generated environment file, re-apply the base Secret, then:
+## Operations
 
 ```bash
-kubectl apply -k deploy
-kubectl apply -f deploy/optional/relay.yaml
-kubectl -n resgrid get service relay
+kubectl -n resgrid get pods,pvc,ingress
+kubectl -n resgrid logs -f deployment/api
+kubectl -n resgrid scale deployment/web deployment/api --replicas=3
+kubectl -n resgrid rollout restart deployment/web
 ```
 
-The relay Service exposes SMTP port 25. The listener has no SMTP authentication or TLS; place it behind a filtering MTA or strict firewall.
+Change settings in `deploy/generated/resgrid.env`, then run `./setup.sh` (re-applies the Secret and restarts the deployments).
 
-## Scaling and customization
-
-Stateless web/API/events workloads can be scaled after validating database and message-bus capacity:
+### Upgrade and repair
 
 ```bash
-kubectl -n resgrid scale deployment/web deployment/api deployment/events --replicas=2
+./setup.sh upgrade      # git pull, then the same as ./setup.sh
 ```
 
-Keep one worker until you have validated the application's multi-worker behavior and payload-key consistency. TTS and MCP can be scaled independently if their workload and storage paths permit it.
+Running `./setup.sh` again is always safe: it never replaces a value you set, never rotates a secret and never deletes data. On an existing install it:
 
-To change default PVC sizes, image tags, probes, or resource limits, add a Kustomize overlay rather than editing generated secrets. The base manifests are under `deploy/base`; generated, host-specific inputs live under `deploy/generated`.
+1. backs up `resgrid.env`, adds the settings new versions need (new secrets get random values), fills in required values that are empty and fixes values known to break;
+2. recreates generated files that are missing (local CA, ingress certificate, `hosts.env`, `host-aliases.yaml`);
+3. applies the manifests (`kubectl apply -k deploy`, plus the optional services listed in `RESGRID_OPTIONAL`), re-running the `rustfs-init` job so new buckets exist, and restarts the deployments so they pull the newest images; the worker migrates the database;
+4. restarts StatefulSet pods that never became ready under an older definition (Kubernetes doesn't replace them on its own);
+5. asks about optional features that are new in this version and re-applies the ones you turned on.
 
-For a generic Kubernetes CNI, set `RESGRID_POD_CIDR` to the actual source network used by your ingress-to-pod traffic. The k3s default is `10.42.0.0/16`; common kubeadm/Calico/Flannel values differ.
+Back up first. Installs from before October 2026 tracked `.env` in git; `upgrade` keeps it aside during the `git pull` (the settings themselves have always been in `deploy/generated/resgrid.env`).
 
-## Upgrade and rollback
-
-Before upgrading:
-
-1. Back up `deploy/generated/resgrid.env` and ingress TLS material.
-2. Take a PostgreSQL dump and a RustFS volume backup/snapshot.
-3. Record deployed image digests: `kubectl -n resgrid get pods -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.containerStatuses[*].imageID}{"\n"}{end}'`.
-4. Render and review the candidate: `kubectl kustomize deploy`.
-
-Apply an update with `kubectl apply -k deploy`, then follow worker migrations and rollout status. Do not assume that rolling back Deployments reverses a schema migration.
-
-Rollback requires the previous manifest/image digests plus a compatible pre-upgrade PostgreSQL backup. Restore data first when required, restore the matching generated environment Secret, reapply the previous manifests, and verify worker/API/event logs before reopening ingress traffic.
-
-## Backup example
+### Backup and restore
 
 ```bash
-kubectl -n resgrid exec statefulset/postgres -- \
-  pg_dumpall -U resgrid > "resgrid-$(date +%F).sql"
+kubectl -n resgrid exec statefulset/db -- sh -c 'pg_dumpall -U "$POSTGRES_USER" --clean --if-exists' | gzip > resgrid-$(date +%F).sql.gz
 ```
 
-Also back up or snapshot the `data-postgres-0` and `data-rustfs-0` PVCs according to your CSI/storage provider. A raw copy of a live database volume is not a substitute for a consistent dump or storage snapshot.
+Also keep `deploy/generated/` (every secret and the CA key) somewhere safe, and snapshot the `data-rustfs-0` PVC with your storage tooling. Restore:
 
-## Uninstall warning
+```bash
+kubectl -n resgrid scale deployment --all --replicas=0
+gunzip -c resgrid-2026-10-27.sql.gz | kubectl -n resgrid exec -i statefulset/db -- sh -c 'psql -q -U "$POSTGRES_USER" -d postgres'
+kubectl -n resgrid scale deployment web api events worker tts mcp --replicas=1
+```
 
-`kubectl delete -k deploy` removes workloads, Services, Ingress, Secret, and namespace-scoped resources. Persistent volume claim retention depends on Kubernetes and the StatefulSet behavior in your cluster. Never use uninstall as a reset mechanism; inventory and back up PVCs first.
+### Production hardening
+
+The base keeps one replica of each stateful service so it runs anywhere. For high availability:
+
+- **PostgreSQL**: run [CloudNativePG](https://cloudnative-pg.io) (or a managed database) with streaming replicas and scheduled backups, then point the five `*ConnectionString` settings in `resgrid.env` at its read-write service and remove the `db` StatefulSet from `deploy/base/infrastructure.yaml`. Run `deploy/base/create-databases.sh` against it once (the worker's init container does this too).
+- **RabbitMQ**: the [RabbitMQ Cluster Operator](https://www.rabbitmq.com/kubernetes/operator/operator-overview) with 3 nodes; set `RabbitHostname`, `RabbitHostname2`, `RabbitHostname3`. Keep `deprecated_features.permit.transient_nonexcl_queues = true` in its configuration.
+- **Redis**: a managed Redis or a Sentinel setup; update `RedisConnectionString`.
+- **Object storage**: RustFS in distributed mode or any S3 service; update the `S3*` settings.
+- Spread `web`/`api` replicas across nodes, add PodDisruptionBudgets, and use a storage class with replication (Longhorn, Ceph) or cloud volumes.
+
+## Architecture
+
+The published Resgrid images are `linux/amd64` only; the base pins the Resgrid pods to amd64 nodes with [`deploy/base/patches/amd64-only.yaml`](deploy/base/patches/amd64-only.yaml). Infrastructure pods run on any architecture. Once multi-architecture images are published, remove that patch from `deploy/kustomization.yaml` to schedule on ARM64 nodes too.
+
+## Optional services
+
+Optional services are files in [`deploy/optional/`](deploy/optional), listed (comma separated) in `RESGRID_OPTIONAL` in `deploy/generated/resgrid.env`. `./setup.sh` applies every listed file on each run and removes the ones it applied before that you took out of the list; files you applied by hand are left alone. `clamav` is managed by the virus-scanning feature. For the others:
+
+- **GPS trackers**: enable `RESGRID__UnitTrackingConfig__*`, add `tracking` to `RESGRID_OPTIONAL`, run `./setup.sh`.
+- **Inbound email**: set the `RESGRID__RELAY__*` department and domain, add `relay` to `RESGRID_OPTIONAL`, run `./setup.sh`.
+
+Both create `LoadBalancer` Services (k3s ServiceLB publishes them on the node IPs). The relay accepts unauthenticated SMTP: firewall port 25.
+
+## Uninstall
+
+`kubectl delete -k deploy` deletes the workloads, Secrets and the namespace, **including the PVCs and their data** with most storage classes. Back up first.
+
+## Files
+
+| Path | Purpose |
+|---|---|
+| [setup.sh](setup.sh) | Generate configuration and deploy, upgrade and repair (safe to re-run); `upgrade`; `features`; `renew-cert` |
+| [features/catalog.ini](features/catalog.ini), [lib/features.sh](lib/features.sh) | Optional features: the catalog and the code that applies it (shared by every branch) |
+| [.env.example](.env.example) | Settings template (becomes the `resgrid-env` Secret) |
+| [deploy/kustomization.yaml](deploy/kustomization.yaml) | Kustomize entry point |
+| [deploy/base/](deploy/base) | Namespace, infrastructure StatefulSets, Resgrid Deployments, Ingress, scripts |
+| `deploy/generated/` | Secrets, certificates, host aliases (generated, git-ignored) |
+| [deploy/optional/](deploy/optional) | ClamAV, tracker gateway and email relay |
+
+## License
+
+Apache 2.0, see [LICENSE](LICENSE).

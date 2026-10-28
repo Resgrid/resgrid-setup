@@ -1,10 +1,13 @@
+# Stateful services: PostgreSQL, Redis, RabbitMQ and RustFS, one replica each.
+# For production HA replace them with managed services or operators (see
+# README.md) and point the connection settings in resgrid.env at them.
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres
+  name: db
 spec:
   selector:
-    app: postgres
+    app: db
   ports:
     - name: postgres
       port: 5432
@@ -13,45 +16,54 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: postgres
+  name: db
 spec:
-  serviceName: postgres
+  serviceName: db
   replicas: 1
   selector:
     matchLabels:
-      app: postgres
+      app: db
   template:
     metadata:
       labels:
-        app: postgres
+        app: db
     spec:
+      securityContext:
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        # Volume ownership changes (fsGroup) can leave the data directory
+        # group-accessible, which PostgreSQL refuses: restore owner-only.
+        - name: fix-permissions
+          image: dhi.io/postgres:18-alpine3.22
+          command: ["sh", "-c", "[ ! -d \"$PGDATA\" ] || chmod 0700 \"$PGDATA\""]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
       containers:
         - name: postgres
           image: dhi.io/postgres:18-alpine3.22
-          imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "/scripts/custom-entrypoint.sh"]
-          envFrom:
-            - secretRef:
-                name: resgrid-env
+          env:
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: POSTGRES_USER}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: POSTGRES_PASSWORD}}
           ports:
             - name: postgres
               containerPort: 5432
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "resgrid"]
-            initialDelaySeconds: 10
+              command: ["pg_isready", "-d", "postgres"]
             periodSeconds: 10
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {memory: 4Gi}
           volumeMounts:
+            # PostgreSQL 18 keeps its data in /var/lib/postgresql/18/data.
             - name: data
-              mountPath: /var/lib/postgresql/data
-            - name: scripts
-              mountPath: /scripts
-              readOnly: true
-      volumes:
-        - name: scripts
-          configMap:
-            name: resgrid-database-scripts
-            defaultMode: 365
+              mountPath: /var/lib/postgresql
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -88,27 +100,30 @@ spec:
       labels:
         app: redis
     spec:
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: redis
           image: dhi.io/redis:8-alpine3.23
-          imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-c"]
-          args:
-            - exec redis-server --save 20 1 --loglevel warning --requirepass "$REDIS_PASSWORD"
+          # The hardened image has no shell; Kubernetes expands $(VAR) itself.
+          args: ["redis-server", "--save", "60", "1", "--loglevel", "warning", "--requirepass", "$(REDIS_PASSWORD)"]
           env:
             - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: resgrid-env
-                  key: REDIS_PASSWORD
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: REDIS_PASSWORD}}
+            # redis-cli (readiness probe) reads the password from here.
+            - name: REDISCLI_AUTH
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: REDIS_PASSWORD}}
           ports:
             - name: redis
               containerPort: 6379
           readinessProbe:
             exec:
-              command: ["/bin/sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep PONG"]
-            initialDelaySeconds: 5
+              command: ["redis-cli", "ping"]
             periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 1Gi}
           volumeMounts:
             - name: data
               mountPath: /data
@@ -151,21 +166,25 @@ spec:
       labels:
         app: rabbitmq
     spec:
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        # Same for the Erlang cookie, which must be readable by its owner only.
+        - name: fix-permissions
+          image: dhi.io/rabbitmq:4.3.0-debian13
+          command: ["sh", "-c", "[ ! -f /var/lib/rabbitmq/.erlang.cookie ] || chmod 0400 /var/lib/rabbitmq/.erlang.cookie"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
       containers:
         - name: rabbitmq
           image: dhi.io/rabbitmq:4.3.0-debian13
-          imagePullPolicy: IfNotPresent
           env:
             - name: RABBITMQ_DEFAULT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: resgrid-env
-                  key: RABBITMQ_USER
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: RABBITMQ_USER}}
             - name: RABBITMQ_DEFAULT_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: resgrid-env
-                  key: RABBITMQ_PASSWORD
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: RABBITMQ_PASSWORD}}
           ports:
             - name: amqp
               containerPort: 5672
@@ -173,12 +192,28 @@ spec:
               containerPort: 15672
           readinessProbe:
             exec:
-              command: ["rabbitmq-diagnostics", "-q", "ping"]
+              command: ["rabbitmq-diagnostics", "-q", "check_running"]
             initialDelaySeconds: 15
             periodSeconds: 15
+            timeoutSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 2Gi}
           volumeMounts:
             - name: data
               mountPath: /var/lib/rabbitmq
+            # Management plugin on, and the transient queues Resgrid uses
+            # permitted (RabbitMQ 4.x denies them by default).
+            - name: config
+              mountPath: /etc/rabbitmq/enabled_plugins
+              subPath: enabled_plugins
+            - name: config
+              mountPath: /etc/rabbitmq/rabbitmq.conf
+              subPath: rabbitmq.conf
+      volumes:
+        - name: config
+          configMap:
+            name: resgrid-rabbitmq
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -215,24 +250,26 @@ spec:
       labels:
         app: rustfs
     spec:
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: rustfs
           image: rustfs/rustfs:latest
-          imagePullPolicy: IfNotPresent
           env:
             - name: RUSTFS_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: resgrid-env
-                  key: RUSTFS_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: RUSTFS_ACCESS_KEY}}
             - name: RUSTFS_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: resgrid-env
-                  key: RUSTFS_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: RUSTFS_SECRET_KEY}}
           ports:
             - name: s3
               containerPort: 9000
+          readinessProbe:
+            tcpSocket: {port: 9000}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 2Gi}
           volumeMounts:
             - name: data
               mountPath: /data
@@ -244,3 +281,38 @@ spec:
         resources:
           requests:
             storage: 20Gi
+---
+# One-shot: creates the RustFS buckets used by TTS, Department Import and
+# Search (idempotent; setup.sh re-runs it on every apply).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rustfs-init
+spec:
+  backoffLimit: 30
+  template:
+    metadata:
+      labels:
+        app: rustfs-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: create-buckets
+          image: rclone/rclone:1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until rclone mkdir rustfs:resgrid-tts; do echo "waiting for rustfs..."; sleep 3; done
+              rclone mkdir rustfs:resgrid-imports
+              rclone mkdir rustfs:resgrid-search
+              echo "Buckets ready."
+          env:
+            - {name: RCLONE_CONFIG, value: /tmp/rclone.conf}
+            - {name: RCLONE_CONFIG_RUSTFS_TYPE, value: s3}
+            - {name: RCLONE_CONFIG_RUSTFS_PROVIDER, value: Other}
+            - {name: RCLONE_CONFIG_RUSTFS_ENDPOINT, value: "http://rustfs:9000"}
+            - {name: RCLONE_CONFIG_RUSTFS_FORCE_PATH_STYLE, value: "true"}
+            - name: RCLONE_CONFIG_RUSTFS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: RUSTFS_ACCESS_KEY}}
+            - name: RCLONE_CONFIG_RUSTFS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: resgrid-env, key: RUSTFS_SECRET_KEY}}

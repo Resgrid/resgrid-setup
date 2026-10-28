@@ -4,15 +4,14 @@ namespace: resgrid
 
 resources:
   - base/namespace.yaml
-  - base/database-scripts.yaml
   - base/infrastructure.yaml
   - base/apps.yaml
-  - base/rustfs-init.yaml
   - base/ingress.yaml
 
 generatorOptions:
   disableNameSuffixHash: true
 
+# Everything under generated/ is written by setup.sh and ignored by git.
 secretGenerator:
   - name: resgrid-env
     envs:
@@ -27,48 +26,44 @@ configMapGenerator:
   - name: resgrid-hosts
     envs:
       - generated/hosts.env
+  # Public certificate of the Resgrid local CA, trusted by every app pod.
+  - name: resgrid-ca
+    files:
+      - resgrid-root-ca.crt=generated/ca.crt
+  - name: resgrid-database-scripts
+    files:
+      - base/create-databases.sh
+  - name: resgrid-rabbitmq
+    files:
+      - base/rabbitmq/enabled_plugins
+      - base/rabbitmq/rabbitmq.conf
+
+patches:
+  - path: base/patches/amd64-only.yaml
+    target:
+      kind: Deployment
+      labelSelector: resgrid.io/tier=app
+  # Resolves the public hostnames to the ingress controller inside the
+  # cluster (written by setup.sh; empty when real DNS is used).
+  - path: generated/host-aliases.yaml
+    target:
+      kind: Deployment
+      labelSelector: resgrid.io/tier=app
 
 replacements:
-  - source:
-      kind: ConfigMap
-      name: resgrid-hosts
-      fieldPath: data.WEB_HOST
+  - source: {kind: ConfigMap, name: resgrid-hosts, fieldPath: data.WEB_HOST}
     targets:
-      - select:
-          kind: Ingress
-          name: resgrid
-        fieldPaths:
-          - spec.rules.0.host
-          - spec.tls.0.hosts.0
-  - source:
-      kind: ConfigMap
-      name: resgrid-hosts
-      fieldPath: data.API_HOST
+      - select: {kind: Ingress, name: resgrid}
+        fieldPaths: [spec.rules.0.host, spec.tls.0.hosts.0]
+  - source: {kind: ConfigMap, name: resgrid-hosts, fieldPath: data.API_HOST}
     targets:
-      - select:
-          kind: Ingress
-          name: resgrid
-        fieldPaths:
-          - spec.rules.1.host
-          - spec.tls.0.hosts.1
-  - source:
-      kind: ConfigMap
-      name: resgrid-hosts
-      fieldPath: data.EVENTS_HOST
+      - select: {kind: Ingress, name: resgrid}
+        fieldPaths: [spec.rules.1.host, spec.tls.0.hosts.1]
+  - source: {kind: ConfigMap, name: resgrid-hosts, fieldPath: data.EVENTS_HOST}
     targets:
-      - select:
-          kind: Ingress
-          name: resgrid
-        fieldPaths:
-          - spec.rules.2.host
-          - spec.tls.0.hosts.2
-  - source:
-      kind: ConfigMap
-      name: resgrid-hosts
-      fieldPath: data.INGRESS_CLASS
+      - select: {kind: Ingress, name: resgrid}
+        fieldPaths: [spec.rules.2.host, spec.tls.0.hosts.2]
+  - source: {kind: ConfigMap, name: resgrid-hosts, fieldPath: data.INGRESS_CLASS}
     targets:
-      - select:
-          kind: Ingress
-          name: resgrid
-        fieldPaths:
-          - spec.ingressClassName
+      - select: {kind: Ingress, name: resgrid}
+        fieldPaths: [spec.ingressClassName]
