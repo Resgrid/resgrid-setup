@@ -1,12 +1,17 @@
-# Installer marker
+# Configuration and secrets created by setup.sh
+.env
+.env.backup-*
 .setup-complete
 
-# Runtime data
-docker-data/sql/
-docker-data/rustfs/
-docker-data/redis/data/*
-!docker-data/redis/data/.gitkeep
-docker-data/caddy/data/*
-!docker-data/caddy/data/.gitkeep
-docker-data/caddy/config/*
-!docker-data/caddy/config/.gitkeep
+# Generated certificates and keys (keep the folders)
+certs/ca/*
+certs/site/*
+certs/private/*
+!certs/**/.gitkeep
+
+# Backups made with the commands in README.md
+backups/
+
+# Left by upgrades from older versions (setup copies the data, never deletes it)
+.legacy-db-migrated
+docker-data/

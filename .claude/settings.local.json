@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"G:/Resgrid/Core\" | head -50)"
+    ]
+  }
+}
